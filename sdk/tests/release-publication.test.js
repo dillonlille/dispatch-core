@@ -6,7 +6,7 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { inventory, hash, verifyRelease } = require('dispatch-protocol/releases/package');
-const { identity, packageRelease, context, assertVerifiedMain, assertUnusedVersion, assertComponentVersions, verifyPublication } = require('../tooling/release-publication');
+const { identity, packageRelease, context, assertVerifiedMain, assertUnusedVersion, assertComponentVersions, verifyPublication, publish } = require('../tooling/release-publication');
 const selected = { product: 'core', repository: 'example/dispatch-core', version: '1.2.3', commit: 'a'.repeat(40) };
 
 test('release package preserves candidate, binds source and verifies every packaged file', t => {
@@ -79,4 +79,51 @@ test('changed SDK or plugin bytes require new component versions across release 
   assert.throws(() => assertComponentVersions(next, [prior]), /package:dispatch-sdk@1.0.0/);
   next.packages['dispatch-sdk'] = '1.0.1';
   assert.doesNotThrow(() => assertComponentVersions(next, [prior]));
+});
+
+test('publisher attests before writing and leaves failed uploads as drafts', t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-publisher-fixture-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const directory = path.join(root, 'publication');fs.mkdirSync(directory);
+  const manifest = { product: selected.product, version: selected.version, channel: 'release', source: identity(selected) };
+  fs.writeFileSync(path.join(directory, 'release.json'), JSON.stringify(manifest));
+  const archive = 'dispatch-core-1.2.3.tar.gz';
+  fs.writeFileSync(path.join(directory, archive), 'fixture archive');
+  fs.writeFileSync(path.join(directory, 'release-notes.md'), 'x'.repeat(30));
+  const names = [archive, 'release.json', 'release-notes.md'];
+  fs.writeFileSync(path.join(directory, 'SHA256SUMS'), names.map(name => `${hash(fs.readFileSync(path.join(directory, name)))}  ${name}\n`).join(''));
+  names.push('SHA256SUMS');
+  const writes = [];
+  let failAttestation = true, corruptUpload = false;
+  const run = (command, args) => {
+    assert.equal(command, 'gh');
+    if (args[0] === 'attestation') {
+      assert(args.includes('--deny-self-hosted-runners'));assert(args.includes(selected.commit));
+      if (failAttestation) throw new Error('attestation_failed');
+      return '';
+    }
+    if (args[0] === 'api') {
+      if (args.includes('POST')) { writes.push('tag');return '{}'; }
+      if (args.at(-1).endsWith('/commits/main')) return JSON.stringify({ sha: selected.commit });
+      if (args.at(-1).includes('/actions/')) return JSON.stringify({ workflow_runs: [{ head_sha: selected.commit, head_branch: 'main', event: 'push', conclusion: 'success' }] });
+      return '[[]]';
+    }
+    if (args[1] === 'create') { assert(args.includes('--draft'));writes.push('draft'); }
+    else if (args[1] === 'download') {
+      const target = args[args.indexOf('--dir') + 1];
+      for (const name of names) fs.copyFileSync(path.join(directory, name), path.join(target, name));
+      if (corruptUpload) fs.appendFileSync(path.join(target, archive), 'tampered');
+    } else if (args[1] === 'edit') writes.push('publish');
+    else if (args[1] === 'view') return JSON.stringify({ url: 'https://example.com/release', isDraft: false, tagName: 'v1.2.3' });
+    else assert.fail(`unexpected command: ${args.join(' ')}`);
+    return '';
+  };
+  assert.throws(() => publish(directory, selected, root, run), /attestation_failed/);
+  assert.deepEqual(writes, []);
+  failAttestation = false;corruptUpload = true;
+  assert.throws(() => publish(directory, selected, root, run), /upload_mismatch/);
+  assert.deepEqual(writes, ['tag', 'draft']);
+  writes.length = 0;corruptUpload = false;
+  assert.equal(publish(directory, selected, root, run).isDraft, false);
+  assert.deepEqual(writes, ['tag', 'draft', 'publish']);
 });
