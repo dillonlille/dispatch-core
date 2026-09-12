@@ -38,6 +38,7 @@ class DirectoryExecution {
   eligible(id) { return this.configuration.enabled && (this.configuration.runtimeKeys === null || this.configuration.runtimeKeys.includes(id)); }
   context(id) {
     validateDspId(id);
+    require('../releases/guard').assertAvailable(this.paths, id);
     const row = this.access.db.prepare('SELECT i.organization_id,i.status,i.revision,i.backend,o.status organization_status FROM installations i JOIN organizations o ON o.id=i.organization_id WHERE i.runtime_key=?').get(id);
     if (!row || row.backend !== BACKEND || !ACTIVE_STATES.includes(row.status)
         || !['pending_owner', 'setup_required', 'active'].includes(row.organization_status)
@@ -215,7 +216,7 @@ class DirectoryExecution {
     try {
       this.context(id);
       if (row.state === 'draining' && this.manager.journal.record(id)?.desiredState === 'stopped') {
-        row = this.store.update(id, { state: 'sleeping', operation_id: null }, this.clock());
+        row = this.store.update(id, { state: 'sleeping' }, this.clock());
       }
       if (['adopting', 'starting'].includes(row.state)) row = await this.start(id);
       const job = this.store.job(id, this.clock());
@@ -250,7 +251,7 @@ class DirectoryExecution {
       const operation = `sleep_${crypto.randomBytes(16).toString('hex')}`;
       this.store.update(id, { state: 'draining', operation_id: operation, next_wake_at: final.nextWakeAt }, this.clock());
       await this.manager.apply('stop', operation, id);
-      this.store.update(id, { state: 'sleeping', operation_id: null, check_at: minimum([final.nextWakeAt, this.store.nextJob(id)]), failure_code: null }, this.clock());
+      this.store.update(id, { state: 'sleeping', operation_id: operation, check_at: minimum([final.nextWakeAt, this.store.nextJob(id)]), failure_code: null }, this.clock());
     } catch (error) {
       const code = /^execution_|^directory_/.test(error.message) ? error.message : 'execution_unavailable';
       this.store.update(id, { failure_code: code, check_at: this.clock() + (code === 'execution_not_permitted' ? 60000 : this.configuration.pollMs) }, this.clock());

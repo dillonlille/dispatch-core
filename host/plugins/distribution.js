@@ -10,9 +10,9 @@ const { packageCatalog, normalizeCatalog } = require('../../core/plugins/package
 
 // Called by the reviewed release/operator delivery step, never an HTTP install
 // request. Staging never changes any DSP's approved version.
-async function distributePackage(paths, { directory, digest }) {
+async function distributePackage(paths, { directory, digest }, { lockFd } = {}) {
   const manifest = verifyPackage(directory, digest);
-  return withLock(paths, async () => {
+  const work = async () => {
     const file = path.join(privateDirectory(path.join(paths.local, 'config')), 'plugin-packages.json');
     packageCatalog(paths); // Validate any existing catalog before extending it.
     const catalog = normalizeCatalog(privateJson(file, process.geteuid(), true) || { schemaVersion: 2, items: [], approved: { production: {}, dsps: {} } });
@@ -36,13 +36,14 @@ async function distributePackage(paths, { directory, digest }) {
     }
     atomic(file, normalizeCatalog(catalog));
     return { pluginId, version, digest, distributed: true, activated: false };
-  });
+  };
+  return lockFd === undefined ? withLock(paths, work) : work();
 }
 // Internal lifecycle port. The release coordinator calls this only for the
 // selected DSP after validating its release. No HTTP-supplied paths are accepted.
-async function approvePackages(paths, { runtimeKey, packages }) {
+async function approvePackages(paths, { runtimeKey, packages }, { lockFd } = {}) {
   if (!/^[a-zA-Z0-9_-]{1,128}$/.test(runtimeKey) || !Array.isArray(packages) || !packages.length) throw new Error('plugin_approval_invalid');
-  return withLock(paths, async () => {
+  const work = async () => {
     const file = path.join(paths.local, 'config/plugin-packages.json');
     const catalog = normalizeCatalog(privateJson(file, process.geteuid()));
     const verified = packageCatalog(paths);
@@ -55,6 +56,7 @@ async function approvePackages(paths, { runtimeKey, packages }) {
     catalog.approved.dsps[runtimeKey] = selected;
     atomic(file, normalizeCatalog(catalog));
     return { runtimeKey, approved: selected };
-  });
+  };
+  return lockFd === undefined ? withLock(paths, work) : work();
 }
 module.exports = { distributePackage, approvePackages };

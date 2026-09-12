@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path');
 const {verifyRelease,secureCopy}=require('../../shared/releases/package');
 const {validateDspId}=require('../../shared/paths/platform-paths');
 const {privateJson,atomic}=require('../../core/installations/src/release-delivery-files');
-const {privateDirectory}=require('../controller/operations');
+const {privateDirectory,syncDirectory}=require('../controller/operations');
 const fileFor=(paths,id)=>path.join(paths.local,'state/dsp-releases',validateDspId(id)+'.json');
 function runtimeSource(paths,id) {
   const current=privateJson(fileFor(paths,id),process.geteuid(),true);
@@ -18,7 +18,11 @@ function prepareDspRelease(paths,id,directory,digest) {
   validateDspId(id);
   if(verifyRelease(directory,digest).product!=='dsp')throw new Error('dsp_release_invalid');
   const parent=privateDirectory(path.join(paths.dsps,id,'runtime/releases')),target=path.join(parent,digest);
-  if(!fs.existsSync(target))secureCopy(directory,target);
+  if(!fs.existsSync(target)){
+    const temporary=target+'.stage-'+require('node:crypto').randomBytes(12).toString('hex');
+    try{secureCopy(directory,temporary);verifyRelease(temporary,digest);fs.renameSync(temporary,target);syncDirectory(parent);}
+    finally{fs.rmSync(temporary,{recursive:true,force:true});}
+  }
   verifyRelease(target,digest);return {dspId:id,digest,directory:target};
 }
 // Lifecycle callers hold their DSP lock and drain old processes before selecting
@@ -32,4 +36,4 @@ function selectDspRelease(paths,id,digest,expectedDigest) {
   }else if(prior)fs.unlinkSync(file);
   return {previousDigest:prior?.digest||null,digest};
 }
-module.exports={runtimeSource,prepareDspRelease,selectDspRelease};
+module.exports={runtimeSource,prepareDspRelease,selectDspRelease,fileFor};

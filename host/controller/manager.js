@@ -96,8 +96,10 @@ class DirectoryManager {
   }
 
   async apply(action, requestId, dspId) {
-    return withLock(this.paths, async lockFd => {
+    return require('../releases/provisioning').withCreation(this.paths, action, assignRelease => withLock(this.paths, async lockFd => {
       if (require('../storage/manual-backups').interruptedRestore(this.paths)) fail('directory_restore_incomplete');
+      require('../releases/guard').assertAvailable(this.paths, dspId);
+      if (action === 'retire' && require('../../core/updates/configuration').loadConfiguration(this.paths)?.devDspId === dspId) fail('directory_dev_protected');
       const job = this.journal.request(action, requestId, dspId);
       if (job.status === 'complete') return this.view(job);
       const checkpoint = phase => { job.phase = phase; job.status = 'pending'; job.error = null; this.journal.save(job); };
@@ -117,6 +119,7 @@ class DirectoryManager {
         this.journal.saveRecord(record);
         checkpoint('storage');
         ensureDsp(this.paths, record.id, record.creationId);
+        if (assignRelease) await assignRelease(record.id, lockFd);
         checkpoint('prepare');
         await this.host.prepare(record.id, lockFd);
         this.checkedDsp(record);
@@ -146,7 +149,7 @@ class DirectoryManager {
         this.journal.save(job);
         throw Object.assign(new Error(job.error, { cause: error }), { code: job.error });
       }
-    });
+    }));
   }
 
   // Reconnect retained services after a controller restart. Stopped or retired
@@ -155,7 +158,7 @@ class DirectoryManager {
     if (this.assistanceConfiguration && !this.pluginBackend) await require('../browser-assistance/runner').reapSessions(this.assistanceConfiguration);
     return withLock(this.paths, async lockFd => {
       if (require('../storage/manual-backups').interruptedRestore(this.paths)) fail('directory_restore_incomplete');
-      const records = this.journal.all().filter(record => select(record) && record.tokenHash);
+      const records = this.journal.all().filter(record => select(record) && record.tokenHash && !require('../releases/guard').dspUpdating(this.paths, record.id));
       const results = await require('../../shared/async/bounded-map').boundedMap(records, 2, async record => {
         await this.host.prepare(record.id, lockFd);
         this.checkedDsp(record);

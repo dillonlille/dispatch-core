@@ -122,7 +122,7 @@ async function openPluginBackend({ paths, installation, store, dspRoot, permitte
         AND p.applied_state='enabled' AND p.revision=p.applied_revision AND i.status='ready'`).all()) {
         try { if (!settingsStore(dspRoot(row.runtime_key),row.plugin_id).pending()) continue;
           const manifest = selected(row.runtime_key,row.plugin_id).manifest.plugin;
-          applySettingsPolicy(dspRoot(row.runtime_key),manifest); } catch { /* Pending policy is retried after lifecycle/storage recovery. */ }
+          if (!require('../../host/releases/guard').updating(paths, row.runtime_key)) applySettingsPolicy(dspRoot(row.runtime_key),manifest); } catch { /* Pending policy is retried after lifecycle/storage recovery. */ }
       }
       }
     } finally { reaping = false; }

@@ -14,7 +14,8 @@
     "host/plugins/tests/lifecycle.test.js",
     "host/plugins/tests/sdk-socket.test.js",
     "host/plugins/tests/worker-layout.test.js",
-    "core/accounts/tests/plugins.test.js"
+    "core/accounts/tests/plugins.test.js",
+    "core/agents/tests/execution.test.js"
   ],
   "integration": [
     "core/plugins/tests/manual-auth-retry.test.js",

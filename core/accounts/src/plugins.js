@@ -36,6 +36,7 @@ function createPluginService({ store, access, invoke, settingsPort = null, insta
   function context(session) {
     const selected = access.requireDspOwner(session);
     const installation = store.installationControl(selected.organization.id);
+    if (store.releaseBlocked?.(selected.organization.id)) fail('release_busy');
     if (selected.organization.status !== 'active' || installation?.status !== 'ready'
         || !backends.includes(store.installationBackend(installation.organizationId)) || store.activeLifecycleJob(selected.organization.id)
         || store.db.prepare("SELECT 1 FROM directory_lifecycle_requests WHERE organization_id=? AND status IN ('queued','running')").get(selected.organization.id)) fail('installation_not_ready');
@@ -89,7 +90,7 @@ function createPluginService({ store, access, invoke, settingsPort = null, insta
   }
   function ready(organizationId, runtimeKey = null) {
     const installation = store.installationControl(organizationId);
-    return installation?.status === 'ready' && backends.includes(store.installationBackend(installation.organizationId))
+    return !store.releaseBlocked?.(organizationId) && installation?.status === 'ready' && backends.includes(store.installationBackend(installation.organizationId))
       && (!runtimeKey || installation.runtimeKey === runtimeKey)
       && store.organization(organizationId)?.status === 'active' && !store.activeLifecycleJob(organizationId)
       && !store.db.prepare('SELECT 1 FROM dsp_removals WHERE organization_id=?').get(organizationId)

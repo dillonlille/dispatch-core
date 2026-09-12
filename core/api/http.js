@@ -185,7 +185,7 @@ function publicHttpFailure(error) {
   // These expected availability failures contain no private diagnostic data.
   // Keep every other server failure opaque, including untrusted lookalike errors.
   if (statusCode === 503 && error instanceof AccessError
-      && ['installation_operator_disabled', 'invitation_email_unavailable', 'turnstile_unavailable', 'password_recovery_unavailable', 'password_recovery_busy'].includes(error.code)) {
+      && ['release_worker_unavailable', 'installation_operator_disabled', 'invitation_email_unavailable', 'turnstile_unavailable', 'password_recovery_unavailable', 'password_recovery_busy'].includes(error.code)) {
     return { statusCode, code: error.code };
   }
   if (statusCode >= 500) return { statusCode, code: 'dashboard_unavailable' };

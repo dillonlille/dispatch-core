@@ -528,10 +528,12 @@ test('local release history is readable without enabling remote downloads or leg
   const response = await fetch(endpoint, { headers: c.headers });
   assert.equal(response.status, 200);
   const view = (await response.json()).data;
-  assert.equal(view.enabled, false); assert.deepEqual(view.releases, []);
+  assert.equal(view.enabled, false); assert.equal(view.mode, 'independent');
+  assert.deepEqual(view.tracks.core.history, []); assert.deepEqual(view.tracks.dsp.history, []);
   const update = await fetch(endpoint, { method: 'POST', headers: c.headers,
     body: JSON.stringify({ action: 'start', releaseId: 'synthetic_release', idempotencyKey: 'directory:unconfigured:release' }) });
-  assert.equal(update.status, 409);
+  assert.equal(update.status, 503);
+  assert.equal((await update.json()).error.code, 'release_worker_unavailable');
   assert.equal(c.app.store.db.prepare('SELECT count(*) n FROM platform_backup_requests').get().n, 0);
 });
 

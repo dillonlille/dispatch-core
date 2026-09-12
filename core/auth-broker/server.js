@@ -16,6 +16,9 @@ const { serveBackend } = require('../plugins/transport');
 async function main() {
   process.umask(0o077);
   const paths = loadPlatformPaths(), lock = acquireLock(paths, 'plugin-backend');
+  const definitions = () => require('../plugins/package-catalog').packageCatalog(paths)?.definitions() || [];
+  require('../../shared/plugin-sdk/catalog').configureCatalog(definitions);
+  require('dispatch-protocol/plugin-sdk/catalog').configureCatalog(definitions);
   const databaseRoot = privateDirectory(path.join(paths.local, 'state/access-control'));
   const store = new AccessStore({ databaseRoot, database: path.join(databaseRoot, 'access-control.sqlite3') });
   const journal = new DirectoryJournal(paths), authority = directoryAccessAuthority({ paths, store, journal });

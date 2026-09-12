@@ -73,3 +73,6 @@ Keep multiline PR bodies in a file and pass `--body-file`.
 
 The manual release workflow is a separate operation; never dispatch it as part of
 ordinary development, merging, testing or retrying CI. See `RELEASES.md`.
+
+Owner update controls, synthetic browser checks and the native DSP release test
+are documented in [core/updates/README.md](core/updates/README.md).

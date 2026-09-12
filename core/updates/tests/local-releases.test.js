@@ -33,6 +33,7 @@ test('staging is inert; Dev approval resets on a new release and sequential roll
  await f.app.stage(three.directory,three.digest);await f.app.step();
  assert.equal(f.app.state().active.dsps.b,two.digest);assert.equal(f.app.state().latest.dsp,three.digest);assert.equal(f.app.state().tested,null);
  assert.equal(new LocalReleases(f.options).state().rollout.status,'completed');
+ assert.equal(f.app.state().defaultDsp,two.digest); // A newly published candidate is not the provisioning default.
 });
 test('failed health restores the selected DSP, pauses rollout and resumes without repeating completed targets',async t=>{
  const f=fixture(t),core=f.artifact('core','1.0.0'),dsp=f.artifact('dsp','1.0.0');
@@ -65,4 +66,11 @@ test('development artifacts are refused by publication mode and interrupted acti
  await f.app.stage(core.directory,core.digest);
  const state=f.app.state();state.operation={product:'core',digest:core.digest,prior:null,dspId:null,snapshot:{value:7},phase:'starting'};f.app.save(state);
  await assert.rejects(f.app.updateCore(core.digest),/release_recovery_required/);await f.app.recover();assert.equal(f.app.state().operation,null);assert.equal(f.data.null,7);
+});
+test('a failed fresh Dev health check revokes rollout eligibility',async t=>{
+ const f=fixture(t),core=f.artifact('core','1.0.0'),dsp=f.artifact('dsp','1.0.0');
+ await f.app.stage(core.directory,core.digest);await f.app.updateCore(core.digest);
+ await f.app.stage(dsp.directory,dsp.digest);await f.app.updateDev(dsp.digest);
+ f.fail('dev');await assert.rejects(f.app.beginRollout(dsp.digest,['a']),/release_health_failed/);
+ assert.equal(f.app.state().tested,null);assert.equal(f.app.state().rollout,null);
 });
