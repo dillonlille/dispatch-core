@@ -32,7 +32,7 @@ function fixture(t) {
   }
   return { root, paths, database, artifact };
 }
-async function coreFixture(t) {
+async function coreFixture(t, { missingBackend = false, stopFailure = false } = {}) {
   const f = fixture(t), before = f.artifact('core', '1.0.0'), next = f.artifact('core', '1.1.0');
   fs.rmdirSync(f.paths.live); secureCopy(path.join(before.directory, 'code'), f.paths.live);
   let releases, fail = false;
@@ -40,6 +40,12 @@ async function coreFixture(t) {
   const hooks = coreHooks({ paths: f.paths, configuration: { apiPort: 4999 }, releases: () => releases.state(), healthTimeoutMs: 5,
     systemctl: async args => {
       events.push(args);
+      if (args[0] === 'stop' && stopFailure) throw new Error('service_stop_failed');
+      if (missingBackend && args[1].startsWith('dispatch-backend-')) {
+        if (args[0] === 'stop') throw new Error('unit_not_loaded');
+        if (args.includes('LoadState')) return 'LoadState=not-found\n';
+      }
+      if (args.includes('LoadState')) return 'LoadState=loaded\n';
       if (args[0] === 'show') return 'ActiveState=inactive\nMainPID=0\nControlPID=0\n';
       if (args[0] === 'start' && args[1] === 'dispatch-api.service') {
         const current = JSON.parse(fs.readFileSync(receiptFile(f.paths)));
@@ -77,6 +83,19 @@ test('Core failed health restores the previous code and compatible database sche
   assert.equal(fs.existsSync(path.join(f.paths.local, 'state/new-migration')), false);
   assert.equal(fs.existsSync(path.join(f.paths.local, 'state/new-file.json')), false);
   assert.equal(f.releases.state().active.core, f.before.digest); assert.equal(f.releases.state().operation, null);
+});
+test('Core rollback accepts an already collected backend service', async t => {
+  const f = await coreFixture(t, { missingBackend: true }); f.fail();
+  await assert.rejects(f.releases.updateCore(f.next.digest), /release_health_failed/);
+  assert.equal(f.releases.state().active.core, f.before.digest);
+  assert.equal(f.releases.state().operation, null);
+  assert.match(fs.readFileSync(path.join(f.paths.live, 'value.js'), 'utf8'), /1.0.0/);
+});
+test('Core stop failures for a loaded service still prevent the swap', async t => {
+  const f = await coreFixture(t, { stopFailure: true });
+  await assert.rejects(f.releases.updateCore(f.next.digest), /release_recovery_required/);
+  assert.match(fs.readFileSync(path.join(f.paths.live, 'value.js'), 'utf8'), /1.0.0/);
+  assert.equal(f.releases.state().operation.phase, 'failed');
 });
 test('Core recovery repairs a crash between the two live-directory renames', async t => {
   const f = await coreFixture(t);
