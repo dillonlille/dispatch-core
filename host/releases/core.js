@@ -12,7 +12,7 @@ function verifyLive(paths, manifest) {
   const expected = manifest.files.filter(item => item.path.startsWith('code/')).map(item => ({ ...item, path: item.path.slice(5) }));
   if (JSON.stringify(inventory(paths.live)) !== JSON.stringify(expected)) throw new Error('release_core_baseline_changed');
 }
-function coreHooks({ paths, configuration, releases, systemctl = async args => privileged(['/usr/bin/systemctl', ...args], { timeout: 300000 }), fetchImpl = fetch, healthTimeoutMs = 90000 }) {
+function coreHooks({ paths, configuration, releases, systemctl = async args => privileged(['/usr/bin/systemctl', ...args], { timeout: 300000 }), fetchImpl = require('./health').requestHealth, healthTimeoutMs = 90000 }) {
   const root = privateDirectory(path.join(paths.local, 'backups/updates/core'));
   let controllerLock, operationLock;
   const unlock = () => {
@@ -32,7 +32,15 @@ function coreHooks({ paths, configuration, releases, systemctl = async args => p
     return path.join(root, token.id);
   };
   const stop = async () => {
-    for (const unit of units) await systemctl(['stop', unit]);
+    for (const unit of units) {
+      try { await systemctl(['stop', unit]); }
+      catch (error) {
+        // A collected backend unit may already be gone after a failed API
+        // startup. Other stop failures must still block the code/state swap.
+        const status = await systemctl(['show', unit, '-p', 'LoadState']);
+        if (status.trim() !== 'LoadState=not-found') throw error;
+      }
+    }
     for (const unit of units) {
       const status = await systemctl(['show', unit, '-p', 'ActiveState', '-p', 'MainPID', '-p', 'ControlPID']);
       const fields = Object.fromEntries(status.trim().split('\n').map(line => line.split('=')));
