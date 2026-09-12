@@ -7,9 +7,10 @@ const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { DirectoryExecution } = require('../../../host/controller/execution');
 const { saveStatus } = require('../../../shared/published/status');
-const { success } = require('../../../shared/contracts/src/result');
+const { success, failure } = require('../../../shared/contracts/src/result');
 
 function fixture(t) {
+  require('../../../shared/plugin-sdk/catalog').configureCatalog(() => [require('../../../tests/fixtures/paycom-plugin.json')]);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'core-execution-'));
   const paths = { local: path.join(root, 'local') };
   for (const name of ['local', 'local/state', 'local/config']) fs.mkdirSync(path.join(root, name), { mode: 0o700 });
@@ -43,7 +44,7 @@ function fixture(t) {
     }
     calls.push([action, id]); return success('accepted', {});
   } };
-  const options = { paths, accessStore: { db }, manager, hub, configuration: { version: 1, enabled: true, idleMs: 1000, pollMs: 100, maxActive: 1 }, clock: () => now };
+  const options = { publishedReader: () => ({ workforce: { employees: () => failure('not_initialized') } }), paths, accessStore: { db }, manager, hub, configuration: { version: 1, enabled: true, idleMs: 1000, pollMs: 100, maxActive: 1 }, clock: () => now };
   function open() { execution = new DirectoryExecution(options); execution.wake = () => {}; }
   open();
   t.after(async () => { await execution.close(); db.close(); fs.rmSync(root, { recursive: true, force: true }); });
@@ -66,6 +67,7 @@ test('idle workers stop, reads never wake them, and concurrent manual requests s
   await c.execution.runPending(); c.advance(1200); await c.execution.runPending();
   assert.equal(c.active.has(id), false);
   assert.equal(c.execution.store.get(id).state, 'sleeping');
+  assert.match(c.execution.store.get(id).operation_id, /^sleep_[a-f0-9]{32}$/);
   const before = c.calls.length;
   for (let i = 0; i < 20; i++) assert.equal((await c.execution.invoke(id, 'sync.status', { id: 'paycom-main-workforce' })).ok, true);
   assert.equal(c.calls.length, before);

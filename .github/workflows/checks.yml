@@ -32,6 +32,12 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run build -- "$RUNNER_TEMP/core-candidate"
+      - name: Install browser for Updates checks
+        working-directory: dashboard
+        run: npx playwright install --with-deps chromium
+      - name: Verify owner Updates workflow in the browser
+        working-directory: dashboard
+        run: npx playwright test --config playwright.updates.config.cjs
       - run: tar -C "$RUNNER_TEMP/platform-packages" -czf "$RUNNER_TEMP/platform-packages.tar.gz" .
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -11,8 +11,10 @@ Every DSP retains its own installed code and private state.
 - [Directory map](AGENTS.md)
 - [Local development](DEVELOPMENT.md)
 - [PR and release workflow](RELEASES.md)
+- [Independent update operations](core/updates/README.md)
 - [Architecture and storage](docs/architecture.md)
 - [Security policy](SECURITY.md)
 
-This source is being prepared locally for repository creation. No repository,
-release version, permanent preview deployment or production cutover is implied.
+Core and DSP use separate public repositories and release versions. Publishing a
+GitHub release makes it available; installing it is a separate owner action. See
+the update operations guide for initial deployment and recovery prerequisites.

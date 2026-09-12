@@ -15,28 +15,26 @@ Updating Core never rewrites an installed DSP's runtime, plugins or SDK copies.
 6. Build and verify immutable artifacts from that main commit, collect a readable
    changelog, and publish the selected product's release. Publishing does not install.
 
-The future owner Updates area has independent Core and DSP pages. Core shows its
-changelog and an Update Core action. Shared dashboard/API features should first be
-validated in a separate Core preview connected only to the permanent Dev DSP.
+The owner Updates area has independent **Core** and **DSPs** tabs, release
+history and changelogs. **Update Core** changes the shared dashboard, API and
+services; it leaves installed DSP runtimes, plugins and SDK copies in place.
+Validate shared changes in an isolated Core preview before installing them.
+There is no automatic Core preview or automatic production deployment.
 
-For DSP releases, Update Dev installs only the permanent testing DSP. Successful
-installation and health checks enable Rollout Update. A newer release before
-rollout resets the required Dev test. Rollout processes DSPs one at a time, checks
-each DSP and pauses on failure. A rollout already started stays pinned to its exact
-artifact even if another release is published. Retain previous code and a compatible
-state snapshot for rollback; reverting code alone cannot undo a database migration.
+**Update Dev** installs the latest DSP release only on the configured permanent
+Dev DSP. A successful installation and live health check enable **Rollout Update**.
+The owner tests Dev and chooses when to start rollout. A newer published release
+before rollout requires another Dev update. An active rollout stays pinned to its
+selected artifact, updates one DSP at a time and pauses on failure. A completed
+rollout sets the default version for new DSPs; a Dev candidate never becomes that
+default. DSPs created during a rollout join its remaining queue.
 
-Local foundations are implemented in `core/updates/local-releases.js`,
-`host/releases/runtime.js` and the package catalog's per-DSP approvals. These are
-internal lifecycle ports, not public HTTP installation endpoints. Activation hooks
-must drain processes, snapshot private state, start selected code, verify health
-and restore on failure. Recover interrupted operations explicitly before continuing.
-The persistent state directory is private and is never included in source exports.
-
-The GitHub feed, permanent Dev DSP deployment, separate Core preview, privileged
-activation hooks and owner Updates UI are subsequent work. The development builder
-still produces development candidates. Publication uses the separate guarded
-workflow below; no release version or production baseline is assigned by setup.
+Updates require a verified initial split deployment, a permanent Dev DSP and the
+separate update worker. The first published `0.0.1` Core predates these controls;
+it cannot install this feature by itself. See [update operations](core/updates/README.md)
+for configuration, adoption prerequisites, lifecycle/recovery and test commands.
+The updater never treats a source checkout or development build as a published
+release. Publishing and installation remain separate owner decisions.
 
 Legacy `core/installations/RELEASES.md` documents old native/OCI recovery formats.
 It does not authorize or describe the new release workflow.
@@ -68,5 +66,5 @@ installed bytes is rejected; bump that component in a reviewed PR first.
 The release job has GitHub publication permissions only. There are no production
 SSH credentials, service restarts, deployment hooks or DSP activation steps.
 GitHub publication and installed-version verification are separate operations.
-The first real publication is still pending an owner-selected version; do not
-claim that upload/attestation publication has been exercised by the unit tests.
+Core and DSP `0.0.1` have been published and their GitHub assets and attestations
+verified. That publication did not install them on the platform.

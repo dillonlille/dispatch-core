@@ -62,6 +62,7 @@ function createAccessHttp({
     if (!current || request.headers['x-dispatch-csrf'] !== current.csrfToken) throw new AccessError('csrf_invalid', 403);
     requireJson(request);
     requireNoQuery(url);
+    if ((current.dspView || current.user.platformRole !== 'owner') && access.store?.releaseBlocked?.(current.activeOrganizationId)) throw new AccessError('release_busy', 409);
   }
 
   function activeOrganizationId(current) {
@@ -354,11 +355,12 @@ function createAccessHttp({
       } else requireNoQuery(url);
       access.requirePlatform(current, 'platform.installations.manage');
       if (!updates) throw new AccessError('installation_operator_disabled', 503);
+      if (updates.ownerOnly && (current.user.platformRole !== 'owner' || current.dspView)) throw new AccessError('platform_forbidden', 403);
       if (request.method === 'POST') {
         requireMutation(request, current, url);
-        updates.command(current, await readJson(request));
+        await updates.command(current, await readJson(request));
       }
-      sendJson(response, 200, { ok: true, status: 'found', data: updates.view(releaseId), error: null });
+      sendJson(response, 200, { ok: true, status: 'found', data: await updates.view(releaseId), error: null });
       return true;
     }
 

@@ -48,6 +48,8 @@ function createDirectoryLifecycle({ store, clock = Date.now }) {
     if (!['suspend', 'resume', 'restart', 'decommission', 'restore_dsp'].includes(action)) fail();
     return store.transaction(() => {
       const control = store.installationControl(organizationId), organization = store.organization(organizationId);
+      if (action === 'decommission' && control?.runtimeKey === store.permanentDevId) fail('directory_dev_protected');
+      if (store.releaseBlocked?.(organizationId)) fail('release_busy');
       if (store.directoryDeletion?.get(organizationId)) fail('installation_operation_not_allowed');
       if (!control || store.installationBackend(organizationId) !== BACKEND) fail();
       const prior = db.prepare('SELECT * FROM directory_lifecycle_requests WHERE organization_id=? AND idempotency_key=?').get(organizationId, requestId);

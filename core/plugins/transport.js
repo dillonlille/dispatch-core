@@ -38,6 +38,7 @@ async function serveBackend({ paths, backend, dspRoot, permitted, prepare = asyn
         if (value.schemaVersion !== 1) throw new Error('invalid_request');
         const dspId = validateDspId(boundDspId || value.dspId), input = value.input;
         const cleanup = !boundDspId && value.operation === 'plugin.revoke';
+        if (!(value.operation === 'auth.request' && input?.action === 'health' && require('../../host/releases/guard').healthAllowed(paths)) && (boundDspId || !['plugin.revoke', 'plugin.initialize', 'dsp.prepare'].includes(value.operation))) require('../../host/releases/guard').assertAvailable(paths, dspId);
         if (!cleanup && !permitted(dspId)) throw new Error('permission_denied');
         let response;
         if (!boundDspId && value.operation === 'dsp.prepare') {

@@ -57,6 +57,7 @@ async function prepareStartup(paths, { port, apiPort } = {}) {
   unitValue(path.join(source, 'bin/dispatch-dashboard'));
   const units = require('./api-units').renderApiUnits({ source, node, config,
     uid: process.geteuid(), gid: process.getegid(), port, apiPort, publicOrigin: settings?.publicOrigin ?? null });
+  if (require('../../core/updates/configuration').loadConfiguration(paths)) units['dispatch-updates.service'] = require('../releases/setup').workerUnit({ paths, node, uid: process.geteuid(), gid: process.getegid() });
   const root = privateDirectory(path.join(paths.local, 'systemd'));
   const unitFiles = Object.entries(units).map(([name, content]) => {
     const file = path.join(root, name); atomic(file, content); return file;

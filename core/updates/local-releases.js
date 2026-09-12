@@ -14,7 +14,7 @@ class LocalReleases {
     Object.assign(this,{devDspId,hooks,allowDevelopment});
   }
   state() {
-    return privateJson(this.file,process.geteuid(),true)||{schemaVersion:1,devDspId:this.devDspId,releases:{core:{},dsp:{}},latest:{core:null,dsp:null},active:{core:null,dsps:{}},tested:null,rollout:null,operation:null};
+    return privateJson(this.file,process.geteuid(),true)||{schemaVersion:1,devDspId:this.devDspId,releases:{core:{},dsp:{}},latest:{core:null,dsp:null},active:{core:null,dsps:{}},tested:null,defaultDsp:null,rollout:null,operation:null};
   }
   async locked(work) {
     const fd=acquireLock({local:this.root});
@@ -25,6 +25,7 @@ class LocalReleases {
   save(state){if(Buffer.byteLength(JSON.stringify(state))>256*1024)throw new Error('release_state_capacity');atomic(this.file,state);}
   async stage(directory,digest,metadata={}) {
     const manifest=verifyRelease(directory,digest);
+    if(manifest.plugins.some(item=>!item||Object.keys(item).sort().join(',')!=='digest,pluginId,version'||!/^[a-z][a-z0-9-]{0,63}$/.test(item.pluginId)||!/^\d+\.\d+\.\d+$/.test(item.version)||!/^[a-f0-9]{64}$/.test(item.digest))||new Set(manifest.plugins.map(item=>item.pluginId)).size!==manifest.plugins.length)throw new Error('release_plugins_invalid');
     if(manifest.channel==='development'&&!this.allowDevelopment)throw new Error('release_not_published');
     return this.locked(state=>{
       if(state.operation)throw new Error('release_recovery_required');
@@ -33,9 +34,13 @@ class LocalReleases {
       if(releases[digest])return {digest,staged:true};
       const target=path.join(privateDirectory(path.join(this.root,'packages',manifest.product)),digest);
       if(fs.existsSync(target))verifyRelease(target,digest);
-      else secureCopy(directory,target);
+      else {
+        const temporary=target+'.stage-'+require('node:crypto').randomBytes(12).toString('hex');
+        try{secureCopy(directory,temporary);verifyRelease(temporary,digest);fs.renameSync(temporary,target);require('../../host/controller/operations').syncDirectory(path.dirname(target));}
+        finally{fs.rmSync(temporary,{recursive:true,force:true});}
+      }
       verifyRelease(target,digest);
-      releases[digest]={digest,version:manifest.version,protocol:manifest.protocol,directory:target,notes:metadata.notes||'',source:metadata.source||null,publishedAt:metadata.publishedAt||null,url:metadata.url||null};
+      releases[digest]={digest,version:manifest.version,protocol:manifest.protocol,directory:target,source:metadata.source||null,publishedAt:metadata.publishedAt||null,url:metadata.url||null};
       const latest=state.latest[manifest.product];
       if(!latest||compareVersions(manifest.version,releases[latest].version)>0){
         state.latest[manifest.product]=digest;
@@ -54,7 +59,7 @@ class LocalReleases {
     const prior=product==='core'?state.active.core:state.active.dsps[dspId]||null;
     const context={product,dspId,digest,previousDigest:prior,directory:release.directory,manifest};
     const work=async()=>{
-    if(prior===digest){if(await this.hooks.verify(context)!==true)throw new Error('release_health_failed');return;}
+    if(prior===digest&&!await this.hooks.requiresActivation?.(context)){if(await this.hooks.verify(context)!==true)throw new Error('release_health_failed');return;}
     state.operation={product,dspId,digest,prior,phase:'preparing'};this.save(state);
     let snapshot;
     try {
@@ -70,7 +75,7 @@ class LocalReleases {
       state.operation=null;this.save(state);
     }catch(error){
       state.operation.phase='failed';this.save(state);
-      try{await this.hooks.restore({...context,snapshot});state.operation=null;this.save(state);}catch{throw new Error('release_recovery_required');}
+      try{state.operation.phase='restoring';this.save(state);await this.hooks.restore({...context,snapshot});state.operation=null;this.save(state);}catch{state.operation.phase='failed';this.save(state);throw new Error('release_recovery_required');}
       throw error;
     }
     };
@@ -80,22 +85,26 @@ class LocalReleases {
   updateDev(digest){return this.locked(async state=>{
     if(state.operation||state.rollout&&state.rollout.status!=='completed')throw new Error('release_busy');
     if(digest!==state.latest.dsp)throw new Error('release_changed');
+    state.tested=null;this.save(state);
     await this.activate(state,'dsp',digest,this.devDspId);state.tested=digest;this.save(state);
   });}
-  beginRollout(digest,dspIds){return this.locked(state=>{
+  beginRollout(digest,dspIds,actor=null){return this.locked(async state=>{
     if(state.operation||state.rollout&&state.rollout.status!=='completed')throw new Error('release_busy');
     if(digest!==state.latest.dsp||digest!==state.tested)throw new Error('release_dev_required');
     if(!Array.isArray(dspIds)||dspIds.some(value=>!id(value))||new Set(dspIds).size!==dspIds.length)throw new Error('release_targets_invalid');
-    state.rollout={digest,targets:dspIds.filter(value=>value!==this.devDspId),next:0,status:'running',failure:null};this.save(state);
+    if(state.active.dsps[this.devDspId]!==digest)throw new Error('release_dev_required');
+    state.tested=null;this.save(state);
+    await this.activate(state,'dsp',digest,this.devDspId);state.tested=digest;
+    state.rollout={digest,actor,targets:dspIds.filter(value=>value!==this.devDspId),next:0,status:'running',failure:null};this.save(state);
   });}
   step(){return this.locked(async state=>{
     const rollout=state.rollout;
     if(state.operation)throw new Error('release_recovery_required');
     if(!rollout||rollout.status!=='running')throw new Error('release_rollout_not_running');
-    if(rollout.next===rollout.targets.length){rollout.status='completed';this.save(state);return {completed:true};}
+    if(rollout.next===rollout.targets.length){rollout.status='completed';state.defaultDsp=rollout.digest;this.save(state);return {completed:true};}
     const dspId=rollout.targets[rollout.next];
-    try{await this.activate(state,'dsp',rollout.digest,dspId);rollout.next++;if(rollout.next===rollout.targets.length)rollout.status='completed';}
-    catch(error){rollout.status='paused';rollout.failure='activation_failed';this.save(state);throw error;}
+    try{await this.activate(state,'dsp',rollout.digest,dspId);rollout.next++;if(rollout.next===rollout.targets.length){rollout.status='completed';state.defaultDsp=rollout.digest;}}
+    catch(error){rollout.status='paused';rollout.failure=/^release_[a-z_]+$/.test(error.message)?error.message:'activation_failed';this.save(state);throw error;}
     this.save(state);return {dspId,digest:rollout.digest,completed:rollout.status==='completed'};
   });}
   resume(){return this.locked(state=>{if(state.operation)throw new Error('release_recovery_required');if(state.rollout?.status!=='paused')throw new Error('release_rollout_not_paused');state.rollout.status='running';state.rollout.failure=null;this.save(state);});}
@@ -104,8 +113,10 @@ class LocalReleases {
     const operation=state.operation;if(!operation)return;
     const release=state.releases[operation.product][operation.digest];
     const context={...operation,previousDigest:operation.prior,directory:release.directory,manifest:verifyRelease(release.directory,operation.digest)};
+    state.operation.phase='restoring';this.save(state);
     const restore=()=>this.hooks.restore(context);
-    if(this.hooks.withActivation)await this.hooks.withActivation(context,restore);else await restore();
+    try{if(this.hooks.withActivation)await this.hooks.withActivation(context,restore);else await restore();}
+    catch(error){state.operation.phase='failed';this.save(state);throw error;}
     state.operation=null;if(state.rollout?.status==='running'){state.rollout.status='paused';state.rollout.failure='interrupted';}this.save(state);
   });}
 }

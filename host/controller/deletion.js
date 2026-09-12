@@ -27,6 +27,7 @@ class DirectoryDeletion {
   request({ organizationId, actorUserId, expectedRevision, requestId }) {
     idempotencyKey(requestId);
     const old = this.get(organizationId), control = this.store.installationControl(organizationId);
+    if (control?.runtimeKey === require('../../core/updates/configuration').loadConfiguration(this.paths)?.devDspId) throw new AccessError('directory_dev_protected', 409);
     if (old) {
       if (old.requestHash !== state.hash(requestId) || old.actorUserId !== actorUserId || old.expectedRevision !== expectedRevision) {
         if (old.status !== 'failed' || old.actorUserId !== actorUserId || expectedRevision !== control?.revision) throw new AccessError('installation_operation_in_progress', 409);

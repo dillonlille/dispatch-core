@@ -80,6 +80,11 @@ class GitHubReleases {
       const digest = hash(JSON.stringify(manifest));
       const checked = verifyRelease(extracted, digest);
       if (JSON.stringify(checked) !== JSON.stringify(manifest)) throw new Error('release_asset_changed');
+      for (const item of manifest.plugins) {
+        if (!/^[a-z][a-z0-9-]{0,63}$/.test(item.pluginId)) throw new Error('release_plugins_invalid');
+        const plugin = require('../../shared/plugin-sdk/package-files').verifyPackage(path.join(extracted, 'plugins', item.pluginId), item.digest).plugin;
+        if (plugin.id !== item.pluginId || plugin.version !== item.version) throw new Error('release_plugins_invalid');
+      }
       const notes = fs.readFileSync(path.join(extracted, 'release-notes.md'), 'utf8');
       if (Buffer.byteLength(notes) > 100000 || !notes.trim()) throw new Error('release_notes_invalid');
       return await this.releases.stage(extracted, digest, { notes, source: manifest.source,

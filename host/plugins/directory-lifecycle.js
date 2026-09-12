@@ -14,15 +14,18 @@ const { success } = require('../../shared/contracts/src/result');
 const { snapshot } = require('./snapshot');
 const { validateSpec } = require('dispatch-runtime-kit/collection-manager/src/validation');
 
-function createDirectoryInstallation({ paths, manager, execution, store, backend = manager.pluginBackend }) {
+function createDirectoryInstallation({ paths, manager, execution, store, backend = manager.pluginBackend, lifecycleLock = null }) {
   if (!backend) throw new Error('plugin_backend_unavailable');
   const locks = new Map();
   const rootFor = id => manager.checkedDsp(manager.journal.record(id)).root;
   const host = new PluginLifecycle({
-    withLifecycle: (id, work) => execution.locked(id, () => withLock(paths, async lockFd => {
+    withLifecycle: (id, work) => {
+      const locked = async lockFd => {
       locks.set(id, lockFd);
       try { return await work(rootFor(id)); } finally { locks.delete(id); }
-    })),
+      };
+      return lifecycleLock ? lifecycleLock(id, locked) : execution.locked(id, () => withLock(paths, locked));
+    },
     drain: async ({ runtimeKey, request }) => {
       await backend.request(runtimeKey, 'plugin.revoke', { pluginId: request.pluginId });
       await manager.host.stop(runtimeKey, locks.get(runtimeKey));

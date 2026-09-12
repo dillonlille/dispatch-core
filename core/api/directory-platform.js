@@ -21,7 +21,6 @@ const { DirectoryLifecycleWorker } = require('../../host/controller/lifecycle');
 const { createDirectoryMonitor } = require('../../host/capacity/monitor');
 const { createDirectoryDiagnostics } = require('../../host/controller/diagnostics');
 const { loadDashboardSettings } = require('../../host/controller/dashboard-settings');
-const { createPlatformUpdates } = require('../accounts/src/platform-updates');
 const { ManualBackups, interruptedRestore } = require('../../host/storage/manual-backups');
 const { invitationDeliveryFromEnvironment } = require('./invitation-email');
 const { DirectoryExecution } = require('../../host/controller/execution');
@@ -34,9 +33,10 @@ async function startDirectoryApi({ paths, installation, host, port = 4310, addre
   if (!['127.0.0.1', '::1', 'localhost'].includes(address) || !Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error('directory_dashboard_invalid');
   }
-  let store, runtime, worker, execution, server, closing;
+  let store, runtime, worker, execution, server, closing, updateControl;
   const close = () => closing ||= (async () => {
     if (server?.listening) await new Promise(resolve => server.close(resolve));
+    await updateControl?.close();
     await worker?.close();
     await execution?.close();
     try { await runtime?.close(); } finally { store?.close(); }
@@ -98,12 +98,18 @@ async function startDirectoryApi({ paths, installation, host, port = 4310, addre
         for (const result of results) if (result.status === 'rejected') onError(result.reason);
       } });
     const client = createRuntimeAgentDispatchClient({ runtimeKey: 'unassigned', hub: runtime.hub });
-    // Local development has no release feed. History stays readable without
-    // activating legacy downloads, rollout workers or pre-update backups.
-    const updates = createPlatformUpdates({ store, enabled: false });
+    // Configuration opts into independent updates; activation belongs to the
+    // external worker and this controller's scoped DSP lifecycle.
+    updateControl = await require('../updates/directory').directoryUpdates({ paths, store, manager: runtime.manager, execution });
+    const updates = updateControl.service;
     const config = dashboardConfig({});
     const pluginAssets = require('../plugins/assets').createPluginAssets({ dspRoot: id => runtime.manager.checkedDsp(runtime.manager.journal.record(id)).root });
-    server = serverFactory({ access, client, config, operator, paycomSetup, connections, plugins, pluginAssets, publicOrigin, secureCookies, updates, backups,
+    const installedCore = require('../installations/src/release-delivery-files').privateJson(require('../../host/releases/core').receiptFile(paths), process.geteuid(), true);
+    const coreMaintenance = () => {
+      const state = require('../installations/src/release-delivery-files').privateJson(path.join(paths.local, 'state/updates/releases.json'), process.geteuid(), true);
+      return state?.operation?.product === 'core' ? { phase: 'updating', nonce: state.operation.preparation?.nonce } : null;
+    };
+    server = serverFactory({ coreIdentity: installedCore, coreMaintenance, access, client, config, operator, paycomSetup, connections, plugins, pluginAssets, publicOrigin, secureCookies, updates, backups,
       // Public installations require email setup before creating invitations.
       // Loopback-only development can still hand off invitation links manually.
       invitationDelivery,

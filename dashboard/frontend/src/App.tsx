@@ -1,3 +1,4 @@
+import { Updates } from "@/pages/Updates";
 import { PasswordRecovery } from "@/pages/PasswordRecovery";
 import { DefaultShellLayout } from "@/themes/defaults/ShellLayout";
 import { PluginBoundary } from "@/plugins/loader";
@@ -306,7 +307,9 @@ function Shell({
           <Dsps />
         ) : route.id === "diagnostics" ? (
           <Diagnostics />
-        ) : route.id === "updates" || route.id === "backups" ? (
+        ) : route.id === "updates" ? (
+          <Updates hash={hash} />
+        ) : route.id === "backups" ? (
           <ManagedPage key={route.id} page={route.id} hash={hash} />
         ) : route.id === "plugins" ? (
           <Plugins />
