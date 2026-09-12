@@ -1,10 +1,11 @@
 'use strict';
-// Local orchestration boundary for the future owner Updates API. Callers supply
+// Durable independent release orchestration. Callers supply
 // lifecycle hooks; constructing this class never starts or modifies a service.
 const fs=require('node:fs'),path=require('node:path');
 const {verifyRelease,secureCopy}=require('../../shared/releases/package');
 const {atomic,privateJson}=require('../installations/src/release-delivery-files');
 const {privateDirectory,acquireLock}=require('../../host/controller/operations');
+const {compareVersions}=require('./github');
 const id=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,128}$/.test(value);
 class LocalReleases {
   constructor({directory,devDspId,hooks,allowDevelopment=false}) {
@@ -22,7 +23,7 @@ class LocalReleases {
   }
 
   save(state){if(Buffer.byteLength(JSON.stringify(state))>256*1024)throw new Error('release_state_capacity');atomic(this.file,state);}
-  async stage(directory,digest) {
+  async stage(directory,digest,metadata={}) {
     const manifest=verifyRelease(directory,digest);
     if(manifest.channel==='development'&&!this.allowDevelopment)throw new Error('release_not_published');
     return this.locked(state=>{
@@ -34,9 +35,12 @@ class LocalReleases {
       if(fs.existsSync(target))verifyRelease(target,digest);
       else secureCopy(directory,target);
       verifyRelease(target,digest);
-      releases[digest]={digest,version:manifest.version,protocol:manifest.protocol,directory:target};
-      state.latest[manifest.product]=digest;
-      if(manifest.product==='dsp')state.tested=null;
+      releases[digest]={digest,version:manifest.version,protocol:manifest.protocol,directory:target,notes:metadata.notes||'',source:metadata.source||null,publishedAt:metadata.publishedAt||null,url:metadata.url||null};
+      const latest=state.latest[manifest.product];
+      if(!latest||compareVersions(manifest.version,releases[latest].version)>0){
+        state.latest[manifest.product]=digest;
+        if(manifest.product==='dsp')state.tested=null;
+      }
       this.save(state);return {digest,staged:true};
     });
   }
@@ -48,11 +52,14 @@ class LocalReleases {
       if(!core||core.protocol!==manifest.protocol)throw new Error('release_incompatible');
     } else for(const selected of Object.values(state.active.dsps))if(state.releases.dsp[selected].protocol!==manifest.protocol)throw new Error('release_incompatible');
     const prior=product==='core'?state.active.core:state.active.dsps[dspId]||null;
-    if(prior===digest)return;
     const context={product,dspId,digest,previousDigest:prior,directory:release.directory,manifest};
-    state.operation={product,dspId,digest,prior,phase:'draining'};this.save(state);
+    const work=async()=>{
+    if(prior===digest){if(await this.hooks.verify(context)!==true)throw new Error('release_health_failed');return;}
+    state.operation={product,dspId,digest,prior,phase:'preparing'};this.save(state);
     let snapshot;
     try {
+      if(this.hooks.prepare){state.operation.preparation=await this.hooks.prepare(context);context.preparation=state.operation.preparation;}
+      state.operation.phase='draining';this.save(state);
       await this.hooks.drain(context);snapshot=await this.hooks.snapshot(context);
       if(snapshot===undefined)throw new Error('release_snapshot_required');
       // The snapshot token must be durable and JSON serializable for recovery.
@@ -66,6 +73,8 @@ class LocalReleases {
       try{await this.hooks.restore({...context,snapshot});state.operation=null;this.save(state);}catch{throw new Error('release_recovery_required');}
       throw error;
     }
+    };
+    return this.hooks.withActivation?this.hooks.withActivation(context,work):work();
   }
   updateCore(digest){return this.locked(async state=>{if(state.operation)throw new Error('release_recovery_required');if(digest!==state.latest.core)throw new Error('release_changed');await this.activate(state,'core',digest);});}
   updateDev(digest){return this.locked(async state=>{
@@ -90,10 +99,13 @@ class LocalReleases {
     this.save(state);return {dspId,digest:rollout.digest,completed:rollout.status==='completed'};
   });}
   resume(){return this.locked(state=>{if(state.operation)throw new Error('release_recovery_required');if(state.rollout?.status!=='paused')throw new Error('release_rollout_not_paused');state.rollout.status='running';state.rollout.failure=null;this.save(state);});}
+  pause(){return this.locked(state=>{if(state.rollout?.status!=='running')throw new Error('release_rollout_not_running');state.rollout.status='paused';state.rollout.failure='owner_paused';this.save(state);});}
   recover(){return this.locked(async state=>{
     const operation=state.operation;if(!operation)return;
     const release=state.releases[operation.product][operation.digest];
-    await this.hooks.restore({...operation,previousDigest:operation.prior,directory:release.directory,manifest:verifyRelease(release.directory,operation.digest)});
+    const context={...operation,previousDigest:operation.prior,directory:release.directory,manifest:verifyRelease(release.directory,operation.digest)};
+    const restore=()=>this.hooks.restore(context);
+    if(this.hooks.withActivation)await this.hooks.withActivation(context,restore);else await restore();
     state.operation=null;if(state.rollout?.status==='running'){state.rollout.status='paused';state.rollout.failure='interrupted';}this.save(state);
   });}
 }
