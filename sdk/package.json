@@ -44,7 +44,8 @@
     "./runtime/storage": "./node/storage.js",
     "./runtime/cdp-transport": "./node/cdp-transport.js",
     "./tooling/project": "./tooling/project.js",
-    "./tooling/release-package": "./tooling/release-package.js"
+    "./tooling/release-package": "./tooling/release-package.js",
+    "./tooling/release-publication": "./tooling/release-publication.js"
   },
   "files": [
     "src",

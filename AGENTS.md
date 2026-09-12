@@ -1,8 +1,10 @@
 # Dispatch Core
 
-This is the future `dispatch-core` repository. The current task is local only:
-do not initialize Git, publish, or change production. In the development workspace,
-read the workspace `AGENTS.md` and `dev/AGENTS.md` as well.
+This is the `dispatch-core` repository. Develop in feature worktrees,
+open PRs, and present verified PR details before requesting merge approval.
+Merge only with explicit approval in chat. Publishing requires a user-requested
+release and user-selected version. Installation is a separate owner action.
+In the Dispatch workspace, also read the workspace `AGENTS.md` and `dev/AGENTS.md`.
 
 - `core/`: shared API, accounts, authorization, browser manager, auth broker,
   plugin service coordination and update state.

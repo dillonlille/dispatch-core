@@ -56,3 +56,20 @@ integration coverage. Older native/OCI restore fixtures remain beside their
 components and are selected explicitly when changing compatibility code.
 Historical monolithic release automation has been retired from these repositories.
 See `RELEASES.md` for the human-approved branch, PR and release workflow.
+
+## GitHub workflow
+
+Use an isolated feature worktree from freshly fetched `origin/main`. Open a draft
+PR after the first reviewed commit. Run the applicable local checks and wait for
+GitHub checks on the exact PR commit before marking it ready. Report the PR link,
+changes and verification in chat. Only merge after the owner explicitly approves;
+recheck the approved head and required checks immediately before merging. Automatic
+merge is disabled. Main requires PRs, up-to-date checks and resolved conversations.
+The owner's chat approval is the human gate; GitHub does not interpret chat.
+
+`tooling/workflow.py pr-details --repo OWNER/REPOSITORY --pr NUMBER` reports PR
+facts. This helper is read-only; use normal git/gh commands for branches and PRs.
+Keep multiline PR bodies in a file and pass `--body-file`.
+
+The manual release workflow is a separate operation; never dispatch it as part of
+ordinary development, merging, testing or retrying CI. See `RELEASES.md`.
