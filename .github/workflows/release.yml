@@ -32,8 +32,6 @@ jobs:
     env:
       RELEASE_VERSION: ${{ inputs.version }}
       RELEASE_COMMIT: ${{ inputs.expected_main }}
-      RELEASE_NOTES_FILE: ${{ runner.temp }}/release-notes.md
-      RELEASE_PLATFORM_BUNDLE: ${{ runner.temp }}/platform-packages
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -45,6 +43,10 @@ jobs:
           cache: npm
           cache-dependency-path: dashboard/package-lock.json
       - run: npm run bootstrap -- "$RUNNER_TEMP/platform-packages"
+      - name: Set release package paths
+        run: |
+          echo "RELEASE_NOTES_FILE=$RUNNER_TEMP/release-notes.md" >> "$GITHUB_ENV"
+          echo "RELEASE_PLATFORM_BUNDLE=$RUNNER_TEMP/platform-packages" >> "$GITHUB_ENV"
       - name: Verify selected main and unused version
         env:
           GH_TOKEN: ${{ github.token }}

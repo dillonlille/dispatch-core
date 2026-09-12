@@ -6,11 +6,11 @@ const path = require('node:path');
 const os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const { inventory, hash, verifyRelease } = require('dispatch-protocol/releases/package');
-const { identity, packageRelease, context, assertVerifiedMain, assertUnusedVersion, verifyPublication } = require('../tooling/release-publication');
+const { identity, packageRelease, context, assertVerifiedMain, assertUnusedVersion, assertComponentVersions, verifyPublication } = require('../tooling/release-publication');
 const selected = { product: 'core', repository: 'example/dispatch-core', version: '1.2.3', commit: 'a'.repeat(40) };
 
 test('release package preserves candidate, binds source and verifies every packaged file', t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-publication-'));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-release-fixture-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const candidate = path.join(root, 'candidate');
   fs.mkdirSync(path.join(candidate, 'code'), { recursive: true });
@@ -67,4 +67,16 @@ test('existing tags and draft releases cannot be overwritten, and API errors fai
   assert.throws(() => assertUnusedVersion(selected, '.', () => JSON.stringify([[{ tag_name: 'v1.2.3', draft: true }]])), /version_exists/);
   assert.throws(() => assertUnusedVersion(selected, '.', () => { throw new Error('network unavailable'); }), /network unavailable/);
   assert.doesNotThrow(() => assertUnusedVersion(selected, '.', () => '[[]]'));
+});
+
+test('changed SDK or plugin bytes require new component versions across release history', () => {
+  const prior = { packages: { 'dispatch-sdk': '1.0.0' }, plugins: [{ pluginId: 'sample', version: '1.0.0', digest: 'a'.repeat(64) }],
+    files: [{ path: 'code/node_modules/dispatch-sdk/src/index.js', sha256: 'b'.repeat(64), executable: false }] };
+  assert.doesNotThrow(() => assertComponentVersions(prior, [prior]));
+  const next = structuredClone(prior);next.plugins[0].digest = 'c'.repeat(64);
+  assert.throws(() => assertComponentVersions(next, [prior]), /plugin:sample@1.0.0/);
+  next.plugins[0].version = '1.0.1';next.files[0].sha256 = 'd'.repeat(64);
+  assert.throws(() => assertComponentVersions(next, [prior]), /package:dispatch-sdk@1.0.0/);
+  next.packages['dispatch-sdk'] = '1.0.1';
+  assert.doesNotThrow(() => assertComponentVersions(next, [prior]));
 });

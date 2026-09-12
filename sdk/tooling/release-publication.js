@@ -93,6 +93,46 @@ function assertUnusedVersion(selected, root, run = execute) {
   const tags = JSON.parse(run('gh', ['api', '--paginate', '--slurp', `repos/${repository}/git/matching-refs/tags/v${version}`], root)).flat();
   const releases = JSON.parse(run('gh', ['api', '--paginate', '--slurp', `repos/${repository}/releases?per_page=100`], root)).flat();
   if (tags.some(item => item.ref === `refs/tags/v${version}`) || releases.some(item => item.tag_name === `v${version}`)) throw new Error('release_version_exists');
+  return releases.filter(item => !item.draft && !item.prerelease);
+}
+
+function componentVersions(manifest) {
+  const components = new Map();
+  for (const [name, version] of Object.entries(manifest.packages)) {
+    const prefix = `code/node_modules/${name}/`;
+    const files = manifest.files.filter(item => item.path.startsWith(prefix));
+    if (!files.length) throw new Error('release_component_files_missing');
+    components.set(`package:${name}@${version}`, sha256(JSON.stringify(files)));
+  }
+  for (const plugin of manifest.plugins) components.set(`plugin:${plugin.pluginId}@${plugin.version}`, plugin.digest);
+  return components;
+}
+
+function assertComponentVersions(manifest, previous) {
+  const next = componentVersions(manifest);
+  for (const prior of previous) for (const [key, digest] of componentVersions(prior)) {
+    if (next.has(key) && next.get(key) !== digest) throw new Error(`release_component_version_reused: ${key}; changed packages need a version bump in a reviewed PR`);
+  }
+}
+
+function verifyPriorComponents(directory, selected, releases, root, run) {
+  const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'release.json')));
+  for (const release of releases) {
+    if (!/^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)$/.test(release.tag_name)) throw new Error('release_history_invalid');
+    const temporary = fs.mkdtempSync(path.join(path.dirname(directory), '.release-history-'));
+    try {
+      run('gh', ['release', 'download', release.tag_name, '--repo', selected.repository, '--pattern', 'release.json', '--dir', temporary], root);
+      const file = path.join(temporary, 'release.json');
+      if (fs.statSync(file).size > 16 * 1024 * 1024) throw new Error('release_history_invalid');
+      const prior = JSON.parse(fs.readFileSync(file));
+      identity({ product: prior.product, repository: prior.source?.repository, commit: prior.source?.commit, version: prior.version });
+      if (prior.product !== selected.product || prior.source.repository !== selected.repository || `v${prior.version}` !== release.tag_name) throw new Error('release_history_invalid');
+      run('gh', ['attestation', 'verify', file, '--repo', selected.repository,
+        '--signer-workflow', `${selected.repository}/.github/workflows/release.yml`, '--source-ref', 'refs/heads/main',
+        '--source-digest', prior.source.commit, '--deny-self-hosted-runners'], root);
+      assertComponentVersions(manifest, [prior]);
+    } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+  }
 }
 
 function verifyPublication(directory, selected) {
@@ -116,7 +156,8 @@ function verifyPublication(directory, selected) {
 function publish(directory, selected, root, run = execute) {
   const names = verifyPublication(directory, selected);
   assertVerifiedMain(selected, root, run);
-  assertUnusedVersion(selected, root, run);
+  const prior = assertUnusedVersion(selected, root, run);
+  verifyPriorComponents(directory, selected, prior, root, run);
   for (const name of names) run('gh', ['attestation', 'verify', path.join(directory, name), '--repo', selected.repository,
     '--signer-workflow', `${selected.repository}/.github/workflows/release.yml`, '--source-ref', 'refs/heads/main',
     '--source-digest', selected.commit, '--deny-self-hosted-runners'], root);
@@ -156,4 +197,4 @@ function main(root, args) {
   throw new Error('usage: release.js guard | package CANDIDATE OUTPUT | publish OUTPUT');
 }
 
-module.exports = { identity, validVersion, packageRelease, context, assertVerifiedMain, assertUnusedVersion, verifyPublication, publish, main };
+module.exports = { identity, validVersion, packageRelease, context, assertVerifiedMain, assertUnusedVersion, assertComponentVersions, verifyPublication, publish, main };
