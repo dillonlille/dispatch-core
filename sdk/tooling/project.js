@@ -6,10 +6,12 @@ async function main(root,args) {
  if(command==='check')return require('./check-source').check(root);
  if(command==='test'||command==='test:integration'){
   const config=JSON.parse(fs.readFileSync(path.join(root,'tooling/tests.json')));
+  const concurrency=config.concurrency??4;
+  if(!Number.isInteger(concurrency)||concurrency<1||concurrency>8)throw new Error('test_concurrency_invalid');
   const groups=command==='test'?config.unit:config.integration;
   if(!groups.length)throw new Error('test_selection_empty');
   const selected=groups.flatMap(group=>group.endsWith('.test.js')?[path.join(root,group)]:require('./verify-boundaries').files(path.join(root,group)).filter(file=>file.endsWith('.test.js')));
-  run(process.execPath,['--no-warnings',...(core?['--require',path.join(root,'tests/support/catalog.cjs')]:[]),'--test','--test-concurrency=4',...selected],root);
+  run(process.execPath,['--no-warnings',...(core?['--require',path.join(root,'tests/support/catalog.cjs')]:[]),'--test',`--test-concurrency=${concurrency}`,...selected],root);
   return {ok:true,testFiles:selected.length};
  }
  if(command==='build'){
