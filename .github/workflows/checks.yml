@@ -1,0 +1,33 @@
+name: Core checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm run bootstrap -- "$RUNNER_TEMP/platform-packages"
+      - run: npm run check
+      - run: npm test
+      - run: npm run build -- "$RUNNER_TEMP/core-candidate"
+      - run: tar -C "$RUNNER_TEMP/platform-packages" -czf "$RUNNER_TEMP/platform-packages.tar.gz" .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: core-development-candidate
+          path: |
+            ${{ runner.temp }}/core-candidate
+            ${{ runner.temp }}/platform-packages.tar.gz
+          retention-days: 7
