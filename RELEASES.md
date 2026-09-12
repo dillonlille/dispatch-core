@@ -33,11 +33,40 @@ must drain processes, snapshot private state, start selected code, verify health
 and restore on failure. Recover interrupted operations explicitly before continuing.
 The persistent state directory is private and is never included in source exports.
 
-The GitHub feed, signed release provenance, repository configuration, permanent Dev
-DSP deployment, separate Core preview, privileged activation hooks and owner Updates
-UI are subsequent work. The development builder intentionally cannot publish a
-production release. Release versions and the deployment baseline are not assigned
-by local repository preparation.
+The GitHub feed, permanent Dev DSP deployment, separate Core preview, privileged
+activation hooks and owner Updates UI are subsequent work. The development builder
+still produces development candidates. Publication uses the separate guarded
+workflow below; no release version or production baseline is assigned by setup.
 
 Legacy `core/installations/RELEASES.md` documents old native/OCI recovery formats.
 It does not authorize or describe the new release workflow.
+
+## GitHub publication
+
+`.github/workflows/release.yml` accepts only a manual dispatch from `main`, the
+owner-selected `version`, the verified 40-character `expected_main` commit, and
+reviewed `changelog` text. Dispatch it only after the owner requests a release and
+supplies its version. Pass inputs as structured JSON; do not interpolate notes
+into shell commands. The release worker checks that main still matches and has a
+successful main-push checks run. It checks again before publishing.
+
+The SDK's `tooling/release-publication.js` packages a fresh verified development
+build, records the source repository/commit and selected version, includes the
+notes in its hashed inventory, and produces a deterministic tar archive plus
+`release.json`, `release-notes.md` and `SHA256SUMS`. Core also publishes
+`platform-packages.tar.gz`, bound by digest in the release manifest. Each asset
+receives GitHub build provenance. Publishing verifies the signer workflow, main
+source ref, source commit and hosted runner before creating the version tag and
+a draft release. It downloads and compares the uploaded assets before publishing.
+
+Existing tags or releases, including drafts, are never overwritten. A failed
+publication can leave a reserved tag or draft; inspect it and its verified assets
+before recovery. Do not repeatedly dispatch publication or delete history to make
+CI pass. Reusing a published SDK/support-package/plugin version with different
+installed bytes is rejected; bump that component in a reviewed PR first.
+
+The release job has GitHub publication permissions only. There are no production
+SSH credentials, service restarts, deployment hooks or DSP activation steps.
+GitHub publication and installed-version verification are separate operations.
+The first real publication is still pending an owner-selected version; do not
+claim that upload/attestation publication has been exercised by the unit tests.
