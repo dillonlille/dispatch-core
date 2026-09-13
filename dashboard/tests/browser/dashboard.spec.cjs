@@ -106,7 +106,7 @@ test("DSP pages do not fetch workforce data before connection; team roles and in
     "Team & Roles",
     "Settings",
   ]);
-  await expect(page.locator("main")).toHaveText("Home Page");
+  await expect(page.getByRole("heading", { level: 1, name: "Currently under development", exact: true })).toBeVisible();
   await navigate(page, "Paycom");
   await expect(page.getByRole("heading", { name: "Paycom", exact: true })).toBeVisible();
   await expect(page.getByText("Paycom is not connected.", { exact: false })).toBeVisible();
@@ -337,7 +337,7 @@ test("session changes clear protected views and Driver access stays within the D
   ]);
   await page.goto("/#/platform");
   await expect(page).toHaveURL(/#\/dashboard$/);
-  await expect(page.locator("main")).toHaveText("Home Page");
+  await expect(page.getByRole("heading", { level: 1, name: "Currently under development", exact: true })).toBeVisible();
   await page.goto("/#/settings?tab=audit");
   await expect(page.getByRole("tab", { name: "Audit log", exact: true })).toBeVisible();
   await expect(page.getByRole("tab", { name: "Audit log", exact: true })).toHaveAttribute("data-state", "active");
