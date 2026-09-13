@@ -80,11 +80,14 @@ async function startDirectoryApi({ paths, installation, host, port = 4310, addre
       ? require('../../host/plugins/directory-lifecycle').createDirectoryInstallation({ paths, manager: runtime.manager, execution, store }) : null;
     const plugins = require('../accounts/src/plugins').createPluginService({ store, access, invoke, installationCoordinator,
       settingsPort: runtime.manager.pluginBackend ? (id,pluginId,request) => runtime.manager.pluginBackend.request(id,'plugin.settings',{pluginId,request}) : null });
+    const verification = runtime.manager.pluginBackend ? require('../../host/controller/paycom-verification')
+      .createPaycomVerification({ backend: runtime.manager.pluginBackend }) : null;
     const paycomSetup = createOwnerPaycomSetup({ store, access, invoke,
       ...(runtime.manager.pluginBackend ? { enroll: require('../../host/controller/paycom-enrollment')
-        .createPaycomEnrollment({ backend: runtime.manager.pluginBackend }) } : {}) });
+        .createPaycomEnrollment({ backend: runtime.manager.pluginBackend, verification }),
+        beginVerification: verification.start, readReadiness: verification.readiness } : {}) });
     const connections = createOwnerConnections({ store, access, invoke, paycomSetup });
-    const onboarding = createOwnerOnboardingWorker({ store, invoke, backends: [BACKEND] });
+    const onboarding = createOwnerOnboardingWorker({ store, invoke, backends: [BACKEND], testProvider: verification?.poll });
     const backups = new ManualBackups({ paths, store, access });
     const deletions = new (require('../../host/controller/deletion').DirectoryDeletion)({ paths, store,
       manager: runtime.manager, backups, execution, onError });

@@ -231,7 +231,7 @@ export function Connections() {
             ? values
             : {},
       );
-      if (action === "test") {
+      if (action === "test" || action === "save") {
         queryClient.setQueryData<ConnectionsData>(
           ["connections", membership?.organizationId],
           (previous) =>

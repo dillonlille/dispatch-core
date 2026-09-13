@@ -78,15 +78,16 @@ async function createConnectionsStack({ directoryEnrollment = false } = {}) {
     }
     return result;
   };
-  const enroll = directoryEnrollment ? require('../../../host/controller/paycom-enrollment').createPaycomEnrollment({
-    backend: { async request(id, operation, input, options) {
+  const backend = { async request(id, operation, input, options) {
       if (id !== runtimeKey || operation !== 'auth.request') throw new Error('wrong DSP');
       const result = await require('dispatch-runtime-kit/auth-broker/src/client').request(paths.socket, input, options);
-      if (state.dropReply) { state.dropReply = false; throw new Error('lost enrollment response'); }
+      if (state.dropReply && input.action === 'enroll-paycom') { state.dropReply = false; throw new Error('lost enrollment response'); }
       return result;
-    } },
-  }) : undefined;
-  const paycomSetup = createOwnerPaycomSetup({ store, access, invoke, ...(enroll ? { enroll } : {}) });
+    } };
+  const verification = require('../../../host/controller/paycom-verification').createPaycomVerification({ backend });
+  const enroll = directoryEnrollment ? require('../../../host/controller/paycom-enrollment').createPaycomEnrollment({ backend, verification }) : undefined;
+  const paycomSetup = createOwnerPaycomSetup({ store, access, invoke,
+    ...(enroll ? { enroll, beginVerification: verification.start, readReadiness: verification.readiness } : {}) });
   const connections = createOwnerConnections({ store, access, invoke, paycomSetup });
   const server = createDashboardServer({ access, connections, paycomSetup, client: {
     workforce: { day: unused }, sync: { status: unused, runNow: unused }, system: { status: unused },
@@ -95,7 +96,7 @@ async function createConnectionsStack({ directoryEnrollment = false } = {}) {
   const base = `http://127.0.0.1:${server.address().port}`;
   const headers = { Cookie: `dispatch_session=${owner.token}`, 'X-Dispatch-CSRF': owner.session.csrfToken, 'Content-Type': 'application/json' };
   return {
-    root, paths, store, access, platform, owner, state, base, headers, password,
+    root, paths, store, access, platform, owner, state, base, headers, password, verification, paycomSetup,
     organizationId: dsp.organization.id,
     save: (id, credentials) => fetch(`${base}/api/organization/connections/${id}/save`, {
       method: 'POST', headers, body: JSON.stringify({ credentials }),

@@ -10,19 +10,23 @@ const input = () => ({ command: 'enroll', requestId: 'setup_' + 'b'.repeat(32), 
 test('direct enrollment forwards only to the selected DSP and confirms the vault acknowledgement', async () => {
   const calls = [];
   const enroll = createPaycomEnrollment({ backend: { request: async (...args) => {
-    calls.push(args); return { ok: true, status: 'configured' };
+    calls.push(args); return args[2].action === 'enroll-paycom' ? { ok: true, status: 'configured' }
+      : { ok: true, status: 'accepted', connection: { service: 'paycom', configured: true, state: 'checking', checkedAt: null, reason: null, retryAt: null } };
   } } });
   assert.deepEqual(await enroll(dsp, input()), { contractVersion: 1, ok: true, status: 'succeeded', data: { configured: true } });
   assert.equal(calls[0][0], dsp); assert.equal(calls[0][1], 'auth.request');
   assert.equal(calls[0][2].action, 'enroll-paycom'); assert.equal(calls[0][2].intent, 'create');
   assert.ok(calls[0][3].signal instanceof AbortSignal);
   assert.equal((await enroll(dsp, { ...input(), expiresAt: Date.now() - 1 })).status, 'invalid_input');
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1][0], dsp);
+  assert.deepEqual(calls[1][2], { action: 'connections', input: { command: 'test', service: 'paycom' } });
 });
 
 test('only an explicit missing profile permits create fallback for replacement', async () => {
   let status = 'profile_not_configured'; const intents = [];
   const enroll = createPaycomEnrollment({ backend: { request: async (_id, _op, request) => {
+    if (request.action !== 'enroll-paycom') throw new Error('check transport unavailable');
     intents.push(request.intent);
     return request.intent === 'create' ? { ok: true, status: 'configured' } : { ok: false, status };
   } } });

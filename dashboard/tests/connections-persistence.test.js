@@ -53,7 +53,8 @@ test('a sleeping directory DSP saves Paycom directly in its vault while runtime 
   assert.equal(job.status, 'queued');
   let capacity = false;
   const worker = require('../../core/installations/src/owner-onboarding').createOwnerOnboardingWorker({
-    store: f.store, backends: ['directory_service_v1'], invoke: async (_id, _action, input) => {
+    store: f.store, backends: ['directory_service_v1'], testProvider: f.verification.poll, invoke: async (_id, _action, input) => {
+      assert.equal(input.step, 'sync');
       if (!capacity) return { ok: false, status: 'execution_capacity_wait' };
       return { ok: true, status: 'succeeded', data: input.step === 'sync'
         ? { syncId: 'paycom-main-workforce', intervalSeconds: 3600, desiredState: 'running' }
@@ -76,6 +77,48 @@ test('a sleeping directory DSP saves Paycom directly in its vault while runtime 
   await f.restartBroker();
   assert.deepEqual(f.state.broker.vault.readForAdapter('paycom-main').credentials, PAYCOM);
   assertNoPlaintext(f.root, PAYCOM.password);
+});
+
+for (const outcome of ['authenticated', 'invalid_credentials']) test(`saving Paycom starts verification immediately and onboarding reuses ${outcome}`, async t => {
+  const f = await createConnectionsStack({ directoryEnrollment: true });
+  let finish, attempts = 0, syncs = 0;
+  const pending = new Promise(resolve => { finish = resolve; });
+  t.after(async () => { finish(); await f.close(); });
+  f.state.authentication = async () => {
+    attempts++; await pending;
+    if (outcome !== 'authenticated') throw Object.assign(new Error(outcome), { code: outcome });
+    return { status: 'authenticated' };
+  };
+  const response = await f.save('paycom', PAYCOM);
+  assert.equal(response.status, 202);
+  assert.equal((await response.json()).data.state, 'checking');
+  assert.equal(attempts, 1);
+  assert.equal((await f.list()).find(item => item.service === 'paycom').state, 'checking');
+  assert.equal(f.state.runtimeEnrollments, 0);
+  const worker = require('../../core/installations/src/owner-onboarding').createOwnerOnboardingWorker({
+    store: f.store, backends: ['directory_service_v1'], testProvider: f.verification.poll,
+    delay: async () => { finish(); await f.state.broker.serviceConnections.close(); },
+    invoke: async (_id, _action, input) => {
+      assert.equal(input.step, 'sync'); syncs++;
+      return { ok: true, status: 'succeeded', data: { syncId: 'paycom-main-workforce', intervalSeconds: 3600, desiredState: 'running' } };
+    },
+  });
+  const result = await worker.runPending('immediate-check');
+  assert.equal(attempts, 1);
+  assert.equal(syncs, outcome === 'authenticated' ? 1 : 0);
+  assert.equal(result.completed, syncs);
+  await f.restartBroker();
+  assert.equal((await f.list()).find(item => item.service === 'paycom').state,
+    outcome === 'authenticated' ? 'connected' : 'credentials_rejected');
+  assertNoPlaintext(f.root, PAYCOM.password);
+  if (outcome === 'invalid_credentials') {
+    f.state.authentication = async () => { attempts++; return { status: 'authenticated' }; };
+    await f.paycomSetup.retry(f.owner.session, {});
+    await f.state.broker.serviceConnections.close();
+    assert.equal(attempts, 2);
+    assert.equal((await worker.runPending('owner-retry')).completed, 1);
+    assert.equal(attempts, 2);
+  }
 });
 
 test('a directory enrollment with a lost response stays recoverable without a runtime slot', async t => {
