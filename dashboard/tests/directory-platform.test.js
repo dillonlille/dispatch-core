@@ -123,12 +123,29 @@ test('deletion scrubs shared platform backups, removes DSP backups, and blocks o
   fs.writeFileSync(path.join(c.paths.local, 'config/platform.json'), JSON.stringify({ version: 1, platformRoot: c.paths.platformRoot }), { mode: 0o600 });
   fs.writeFileSync(path.join(c.paths.dsps, c.target.runtime_key, 'data/target.txt'), 'synthetic target contents', { mode: 0o600 });
   fs.writeFileSync(path.join(c.paths.dsps, c.neighbor.runtime_key, 'data/neighbor.txt'), 'synthetic neighbor contents', { mode: 0o600 });
+  const { DatabaseSync } = require('node:sqlite');
+  for (const row of [c.target, c.neighbor]) {
+    const file = path.join(c.paths.dsps, row.runtime_key, 'data/snapshot.sqlite3');
+    const db = new DatabaseSync(file);
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE entries(value TEXT); INSERT INTO entries VALUES('synthetic retained data')");
+    db.close(); fs.chmodSync(file, 0o600);
+  }
   backups.volumes = { ensure: async () => ({ limited: false }) };
   const records = c.app.runtime.manager.journal.all();
   const platformId = 'mbk_' + '1'.repeat(32), dspId = 'mbk_' + '2'.repeat(32);
   await backups.create({ scope: 'platform', organizationId: null, records, backupId: platformId }, null);
   await backups.create({ scope: 'dsp', organizationId: c.target.organization_id, records: [records.find(r => r.id === c.target.runtime_key)], backupId: dspId }, null);
   const original = fs.readFileSync(path.join(backups.root, platformId, 'manifest.json'));
+  for (const row of [c.target, c.neighbor]) {
+    const file = path.join(backups.root, platformId, 'payload', row.runtime_key + '_data/snapshot.sqlite3');
+    const reader = new DatabaseSync(file, { readOnly: true });
+    reader.prepare('SELECT value FROM entries').get(); reader.close();
+    for (const suffix of ['-wal', '-shm']) {
+      fs.chmodSync(file + suffix, 0o600);
+      const later = (JSON.parse(original).createdAt + 1000) / 1000;
+      fs.utimesSync(file + suffix, later, later);
+    }
+  }
   await c.app.access.requestPlatformRemoval(c.login.session, c.command(), 'destroy');
   assert.throws(() => backups.inspect(platformId), /directory_deletion_in_progress/);
   await c.app.deletions.runPending();
@@ -137,11 +154,39 @@ test('deletion scrubs shared platform backups, removes DSP backups, and blocks o
   const retained = backups.inspect(platformId);
   assert.deepEqual(retained.dsps.map(dsp => dsp.id), [c.neighbor.runtime_key]);
   assert.equal(fs.readFileSync(path.join(backups.root, platformId, 'payload', c.neighbor.runtime_key + '_data/neighbor.txt'), 'utf8'), 'synthetic neighbor contents');
+  assert.equal(fs.existsSync(path.join(backups.root, platformId, 'payload', c.neighbor.runtime_key + '_data/snapshot.sqlite3-shm')), false);
   const saved = new (require('node:sqlite').DatabaseSync)(path.join(backups.root, platformId, 'payload/core/access-control.sqlite3'), { readOnly: true });
   assert.equal(saved.prepare('SELECT 1 FROM organizations WHERE id=?').get(c.target.organization_id), undefined);
   assert.ok(saved.prepare('SELECT 1 FROM organizations WHERE id=?').get(c.neighbor.organization_id)); saved.close();
   fs.writeFileSync(path.join(backups.root, platformId, 'manifest.json'), original);
   assert.throws(() => backups.inspect(platformId), /directory_dsp_deleted/);
+});
+
+test('backup integrity failures retain their code and deletion retries after the original data is restored', async t => {
+  const c = await deletionFixture(t), backups = c.app.backups;
+  await c.remove(c.target);
+  const data = path.join(c.paths.dsps, c.target.runtime_key, 'data/target.txt');
+  fs.writeFileSync(data, 'synthetic original data', { mode: 0o600 });
+  backups.volumes = { ensure: async () => ({ limited: false }) };
+  const backupId = 'mbk_' + '3'.repeat(32);
+  await backups.create({ scope: 'dsp', organizationId: c.target.organization_id,
+    records: [c.app.runtime.manager.journal.record(c.target.runtime_key)], backupId }, null);
+  const saved = path.join(backups.root, backupId, 'payload', c.target.runtime_key + '_data/target.txt');
+  fs.writeFileSync(saved, 'changed data');
+  const input = c.command();
+  await c.app.access.requestPlatformRemoval(c.login.session, input, 'destroy');
+  await c.app.deletions.runPending();
+  assert.equal(c.app.deletions.get(c.target.organization_id).phase, 'backups');
+  assert.equal(c.app.deletions.get(c.target.organization_id).failureCode, 'directory_backup_changed');
+  assert.equal(c.errors.at(-1).code, 'directory_backup_changed');
+  assert.equal(fs.existsSync(data), true);
+  assert.ok(c.app.store.organization(c.target.organization_id));
+  fs.writeFileSync(saved, 'synthetic original data');
+  await c.app.access.requestPlatformRemoval(c.login.session, input, 'destroy');
+  await c.app.deletions.runPending();
+  assert.equal(c.app.deletions.get(c.target.organization_id).status, 'complete');
+  assert.equal(fs.existsSync(path.join(backups.root, backupId)), false);
+  assert.ok(c.app.store.organization(c.neighbor.organization_id));
 });
 
 test('an interrupted deletion remains blocked from restore and resumes its recorded phase', async t => {

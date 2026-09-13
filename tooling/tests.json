@@ -14,6 +14,7 @@
     "host/plugins/tests/lifecycle.test.js",
     "host/plugins/tests/sdk-socket.test.js",
     "host/plugins/tests/worker-layout.test.js",
+    "host/storage/tests/backup-erasure-verification.test.js",
     "core/accounts/tests/plugins.test.js",
     "core/agents/tests/execution.test.js"
   ],

@@ -2,6 +2,11 @@
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
+function failure(code) {
+  const safe = /^directory_[a-z_]{1,80}$/.test(code || '') ? code : 'directory_backup_erasure_failed';
+  return Object.assign(new Error(safe), { code: safe });
+}
+
 // Hashing large retained snapshots runs in a finite process, keeping Core's
 // request loop responsive and releasing the scan's memory when it finishes.
 function eraseBackupJob(paths, job, lockFd) {
@@ -14,11 +19,14 @@ function eraseBackupJob(paths, job, lockFd) {
     child.stdout.on('data', chunk => { bytes += chunk.length; if (bytes > 4096) child.kill('SIGKILL'); else output += chunk; });
     child.stderr.on('data', chunk => { bytes += chunk.length; if (bytes > 4096) child.kill('SIGKILL'); });
     child.stdin.on('error', () => {});
-    child.on('error', () => { clearTimeout(timer); reject(Error('directory_backup_erasure_failed')); });
+    child.on('error', () => { clearTimeout(timer); reject(failure()); });
     child.on('close', code => {
       clearTimeout(timer);
-      try { if (code !== 0 || JSON.parse(output).ok !== true) throw Error(); resolve(); }
-      catch { reject(Error('directory_backup_erasure_failed')); }
+      try {
+        const result = JSON.parse(output);
+        if (code !== 0 || result.ok !== true) reject(failure(result.code));
+        else resolve();
+      } catch { reject(failure()); }
     });
     child.stdin.end(JSON.stringify({ platformRoot: paths.platformRoot, id: job.id,
       organizationId: job.organizationId, runtimeKey: job.runtimeKey }));
@@ -38,7 +46,7 @@ if (require.main === module) {
       const backups = new (require('./manual-backups').ManualBackups)({ paths, store });
       require('./erase-backups').eraseBackups(backups, job);
       process.stdout.write('{"ok":true}\n');
-    } catch { process.stdout.write('{"ok":false}\n'); process.exitCode = 1; }
+    } catch (error) { process.stdout.write(JSON.stringify({ ok: false, code: failure(error.code).code }) + '\n'); process.exitCode = 1; }
     finally { store?.close(); }
   })();
 }
