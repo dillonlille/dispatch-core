@@ -200,7 +200,15 @@ async function main() {
     },
   };
   const runtimePlugins = new Map();
-  const paycomManifest=require('../../tests/fixtures/paycom-plugin.json');
+  // Core-only UI checks need catalog metadata but do not install a DSP fixture.
+  // Plugin browser checks use the explicitly installed DSP test package.
+  let paycomFixtureRoot = null;
+  try { paycomFixtureRoot = path.dirname(require.resolve('dispatch-dsp/plugins/paycom/dispatch-plugin.json')); }
+  catch (error) { if (error.code !== 'MODULE_NOT_FOUND') throw error; }
+  const paycomManifest = paycomFixtureRoot ? require(path.join(paycomFixtureRoot, 'dispatch-plugin.json'))
+    : require('../../tests/fixtures/paycom-plugin.json');
+  require('../../shared/plugin-sdk/catalog').configureCatalog(() => [paycomManifest]);
+  require('dispatch-protocol/plugin-sdk/catalog').configureCatalog(() => [paycomManifest]);
   const settingsDefinition=paycomManifest.settings;
   const settingsFor=id=>require('../../core/plugins/settings-store').settingsStore(path.join(root,id),'paycom');
   const published=path.join(root,'published/paycom.sqlite3');
@@ -294,10 +302,12 @@ async function main() {
   const server = createDashboardServer({ client, access, updates, backups, paycomSetup, connections, plugins, releasePopup, turnstile, invitationDelivery,
     pluginAssets: async ({ pluginId, revision }) => {
       if (pluginId !== 'paycom') throw new Error('plugin_unavailable');
+      if (!paycomFixtureRoot) throw new Error('dsp_test_fixture_required');
       const directory = path.join(root, 'frontend', pluginId);
       if (!fs.existsSync(path.join(directory, 'index.js'))) {
         const { buildFrontend } = await import('../../tooling/build-plugin-frontend.mjs');
-        await buildFrontend({ pluginRoot: path.resolve(__dirname, '../../plugins', pluginId), output: directory });
+        await buildFrontend({ pluginRoot: paycomFixtureRoot,
+          output: directory, toolsRoot: path.resolve(__dirname, '..') });
       }
       return { id: pluginId, version: paycomManifest.version, revision, javascript: fs.readFileSync(path.join(directory, 'index.js'), 'utf8'), stylesheet: fs.readFileSync(path.join(directory, 'styles.css'), 'utf8') };
     },

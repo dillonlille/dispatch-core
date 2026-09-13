@@ -12,6 +12,7 @@ async function login(page, f) {
 
 for (const mobile of [false, true]) test(`form credentials reach a directory DSP vault without a runtime slot (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
   const f = await createConnectionsStack({ directoryEnrollment: true });
+  let finishPaycom;
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -37,6 +38,9 @@ for (const mobile of [false, true]) test(`form credentials reach a directory DSP
     await cortex.getByRole('button', { name: 'Update credentials' }).click();
     await expect(dialog.getByLabel('Amazon password')).toHaveValue('');
     await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    let paycomAttempts = 0;
+    const pendingPaycom = new Promise(resolve => { finishPaycom = resolve; });
+    f.state.authentication = async () => { paycomAttempts++; await pendingPaycom; return { status: 'authenticated' }; };
     await page.getByRole('button', { name: 'Connect Paycom', exact: true }).click();
     const paycom = { clientCode: 'form-client', username: 'form-paycom-owner', password: 'form-paycom-secret',
       pin1: 'one', pin2: 'two', pin3: 'three', pin4: 'four', pin5: 'five' };
@@ -49,16 +53,24 @@ for (const mobile of [false, true]) test(`form credentials reach a directory DSP
     expect((await paycomSaved).status()).toBe(202);
     expect(f.state.runtimeEnrollments).toBe(0);
     await expect(dialog).toHaveCount(0);
+    const paycomCard = page.locator('[data-slot="card"]').filter({ has: page.getByText('Paycom', { exact: true }) });
+    await expect(paycomCard.getByText('Checking session', { exact: true })).toBeVisible();
+    await expect(paycomCard.getByText('Not verified', { exact: true })).toHaveCount(0);
+    expect(paycomAttempts).toBe(1);
+    await page.screenshot({ path: `/tmp/dispatch-paycom-checking-${mobile ? 'mobile' : 'desktop'}.png`, fullPage: true });
+    finishPaycom();
+    await expect(paycomCard.getByText('Connected', { exact: true })).toBeVisible();
     await f.restartBroker();
     expect(f.state.broker.vault.readForAdapter('paycom-main').credentials).toEqual(paycom);
     await page.reload();
+    await expect(paycomCard.getByText('Connected', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Update credentials', exact: true })).toHaveCount(2);
     expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain(credentials.password);
     expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain(paycom.password);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
     await page.screenshot({ path: `/tmp/dispatch-save-verified-${mobile ? 'mobile' : 'desktop'}.png`, fullPage: true });
     expect(errors).toEqual([]);
-  } finally { await page.close(); await f.close(); }
+  } finally { finishPaycom?.(); await page.close(); await f.close(); }
 });
 
 for (const mobile of [false, true]) test(`an unconfirmed Paycom save stays dismissible during a stalled status check (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {

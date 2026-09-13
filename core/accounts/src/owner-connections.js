@@ -5,6 +5,7 @@ const { managedInstallationContext } = require('./installation-authority');
 const { SERVICES, service, credentialsFor, verificationInput, connectionView, connectionList, REASONS } = require('../../../shared/contracts/src/connections');
 
 function createOwnerConnections({ store, access, invoke, clock = Date.now, paycomSetup = null }) {
+  const onboarding = require('./onboarding-store').createOnboardingStore(store, clock);
   function context(session) {
     const { organization } = access.requireDspOwner(session);
     const selected = managedInstallationContext(store, organization.id);
@@ -36,6 +37,15 @@ function createOwnerConnections({ store, access, invoke, clock = Date.now, payco
         return { items: listed.items.filter(item => {
           const owner = require('../../../shared/plugin-sdk/catalog').catalog().find(plugin => plugin.services.includes(item.service));
           return !owner || require('./plugins').available(store, selected.organization.id, owner.id);
+        }).map(item => {
+          // A confirmed save can outlive a lost check acknowledgement. Its
+          // durable onboarding request still owns the pending verification.
+          if (item.service === 'paycom' && item.state === 'not_verified') {
+            const pending = onboarding.latest(selected.organization.id);
+            if (['queued', 'running'].includes(pending?.status)) return { ...item, state: 'checking', reason: null };
+            if (pending?.status === 'failed') return { ...item, state: 'temporarily_unavailable', reason: 'auth_unavailable' };
+          }
+          return item;
         }) };
       }
       if (result.status !== 'accepted') throw new Error();

@@ -8,6 +8,7 @@ const { providerEvidence } = require('./activation');
 const { setupFailure } = require('../../../shared/contracts/src/paycom-setup');
 function fail(code = 'installation_not_ready') { throw Object.assign(new Error(code), { code }); }
 function createOwnerOnboardingWorker({ store, invoke, backends = ['oci_container_v1', 'native_service_v1'], clock = Date.now,
+  testProvider = null,
   delay = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
   const requests = createOnboardingStore(store, clock);
   async function run(id, workerId) {
@@ -38,7 +39,8 @@ function createOwnerOnboardingWorker({ store, invoke, backends = ['oci_container
       let step = 'test';
       for (;;) {
         guard();
-        const result = await invoke(selected.manifest.runtime.key, 'paycom.setup', {
+        const result = step === 'test' && testProvider ? await testProvider(selected.manifest.runtime.key)
+          : await invoke(selected.manifest.runtime.key, 'paycom.setup', {
           command, requestId, step, manifest: selected.manifest,
           manifestAuthority: selected.manifestAuthority, parameters: {},
         });

@@ -8,6 +8,7 @@ const { createAccessInstallationActivationAuthority } = require('./installation-
 const { createOnboardingStore } = require('./onboarding-store');
 function fail(code, status = 409) { throw new AccessError(code, status); }
 function createOwnerPaycomSetup({ store, access, invoke, clock = Date.now,
+  beginVerification = null, readReadiness = null,
   enroll = (key, input) => invoke(key, 'paycom.setup', input) }) {
   const requests = createOnboardingStore(store, clock);
   function context(session) {
@@ -40,7 +41,8 @@ function createOwnerPaycomSetup({ store, access, invoke, clock = Date.now,
         || !['failed', 'ready', 'verifying', 'waiting_for_provider_auth'].includes(selected.installation.status)) return result;
     let readiness;
     try {
-      const response = await invoke(selected.manifest.runtime.key, 'paycom.setup', {
+      const response = readReadiness ? await readReadiness(selected.manifest.runtime.key)
+        : await invoke(selected.manifest.runtime.key, 'paycom.setup', {
         command: 'status', requestId: row.id, step: 'readiness', manifest: selected.manifest,
         manifestAuthority: selected.manifestAuthority, parameters: {},
       });
@@ -134,13 +136,22 @@ function createOwnerPaycomSetup({ store, access, invoke, clock = Date.now,
     const row = requests.latest(selected.organization.id);
     const readiness = await status(session);
     if (!readiness.canRetry) fail('installation_operation_not_allowed');
-    const current = context(session);
-    const latest = requests.latest(current.organization.id);
-    if (latest?.id !== row?.id || latest?.fence !== row?.fence || latest?.status !== 'failed'
-        || current.installation.revision !== selected.installation.revision
-        || current.installation.status !== selected.installation.status
-        || JSON.stringify(current.manifest) !== JSON.stringify(selected.manifest)
-        || store.activeLifecycleJob(current.organization.id)) fail('installation_operation_in_progress');
+    const guard = () => {
+      const current = context(session);
+      const latest = requests.latest(current.organization.id);
+      if (latest?.id !== row?.id || latest?.fence !== row?.fence || latest?.status !== 'failed'
+          || current.installation.revision !== selected.installation.revision
+          || current.installation.status !== selected.installation.status
+          || JSON.stringify(current.manifest) !== JSON.stringify(selected.manifest)
+          || store.activeLifecycleJob(current.organization.id)) fail('installation_operation_in_progress');
+    };
+    guard();
+    // An owner retry starts a fresh check before the worker sees the request.
+    if (beginVerification) {
+      try { await beginVerification(selected.manifest.runtime.key); }
+      catch { fail('auth_unavailable', 503); }
+      guard();
+    }
     if (['ready', 'verifying', 'waiting_for_provider_auth'].includes(selected.installation.status)) {
       store.transaction(() => {
         const row = requests.latest(selected.organization.id);

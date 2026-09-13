@@ -7,7 +7,8 @@ const { AccessError } = require('../../core/accounts/src/validation');
 // The owner setup service owns authorization, idempotency and the onboarding
 // receipt. Send credentials straight to the DSP's isolated vault worker so
 // saving them never requires a collection-runtime slot or a persisted job body.
-function createPaycomEnrollment({ backend, clock = Date.now }) {
+function createPaycomEnrollment({ backend, clock = Date.now,
+  verification = require('./paycom-verification').createPaycomVerification({ backend, clock }) }) {
   return async (dspId, value) => {
     const input = setupRequest(value, dspId);
     if (input.command !== 'enroll') return failure('invalid_input');
@@ -22,6 +23,9 @@ function createPaycomEnrollment({ backend, clock = Date.now }) {
       if (!result.ok && result.status === 'profile_not_configured' && input.intent === 'replace') result = await send('create');
       if (!result.ok) return failure(setupFailure(result.status));
       if (result.status !== 'configured') throw new Error('invalid_response');
+      // Start before acknowledging Save and connect. A lost check response does
+      // not invalidate a confirmed save; the durable onboarding job recovers it.
+      await verification.start(dspId).catch(() => {});
       return success('succeeded', { configured: true });
     } catch {
       // A lost response may follow persistence. Keep the existing unconfirmed
