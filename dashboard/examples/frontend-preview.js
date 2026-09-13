@@ -200,7 +200,9 @@ async function main() {
     },
   };
   const runtimePlugins = new Map();
-  const paycomManifest=require('../../tests/fixtures/paycom-plugin.json');
+  const paycomManifest=require('dispatch-dsp/plugins/paycom/dispatch-plugin.json');
+  require('../../shared/plugin-sdk/catalog').configureCatalog(() => [paycomManifest]);
+  require('dispatch-protocol/plugin-sdk/catalog').configureCatalog(() => [paycomManifest]);
   const settingsDefinition=paycomManifest.settings;
   const settingsFor=id=>require('../../core/plugins/settings-store').settingsStore(path.join(root,id),'paycom');
   const published=path.join(root,'published/paycom.sqlite3');
@@ -297,7 +299,8 @@ async function main() {
       const directory = path.join(root, 'frontend', pluginId);
       if (!fs.existsSync(path.join(directory, 'index.js'))) {
         const { buildFrontend } = await import('../../tooling/build-plugin-frontend.mjs');
-        await buildFrontend({ pluginRoot: path.resolve(__dirname, '../../plugins', pluginId), output: directory });
+        await buildFrontend({ pluginRoot: path.dirname(require.resolve('dispatch-dsp/plugins/paycom/dispatch-plugin.json')),
+          output: directory, toolsRoot: path.resolve(__dirname, '..') });
       }
       return { id: pluginId, version: paycomManifest.version, revision, javascript: fs.readFileSync(path.join(directory, 'index.js'), 'utf8'), stylesheet: fs.readFileSync(path.join(directory, 'styles.css'), 'utf8') };
     },

@@ -40,9 +40,10 @@ function createOwnerConnections({ store, access, invoke, clock = Date.now, payco
         }).map(item => {
           // A confirmed save can outlive a lost check acknowledgement. Its
           // durable onboarding request still owns the pending verification.
-          if (item.service === 'paycom' && item.state === 'not_verified'
-              && ['queued', 'running'].includes(onboarding.latest(selected.organization.id)?.status)) {
-            return { ...item, state: 'checking', reason: null };
+          if (item.service === 'paycom' && item.state === 'not_verified') {
+            const pending = onboarding.latest(selected.organization.id);
+            if (['queued', 'running'].includes(pending?.status)) return { ...item, state: 'checking', reason: null };
+            if (pending?.status === 'failed') return { ...item, state: 'temporarily_unavailable', reason: 'auth_unavailable' };
           }
           return item;
         }) };

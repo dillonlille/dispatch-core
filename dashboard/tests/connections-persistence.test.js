@@ -121,6 +121,32 @@ for (const outcome of ['authenticated', 'invalid_credentials']) test(`saving Pay
   }
 });
 
+for (const recovered of [true, false]) test(`an unsent initial check exposes pending work and its eventual ${recovered ? 'success' : 'failure'}`, async t => {
+  const f = await createConnectionsStack({ directoryEnrollment: true }); t.after(() => f.close());
+  let attempts = 0;
+  f.state.authentication = async () => { attempts++; return { status: 'authenticated' }; };
+  f.verification.start = async () => { throw new Error('initial verification delivery unavailable'); };
+  const response = await f.save('paycom', PAYCOM);
+  assert.equal(response.status, 202);
+  assert.equal((await response.json()).data.state, 'checking');
+  assert.equal(attempts, 0);
+  assert.equal(f.state.broker.serviceConnections.view('paycom').state, 'not_verified');
+  const worker = require('../../core/installations/src/owner-onboarding').createOwnerOnboardingWorker({
+    store: f.store, backends: ['directory_service_v1'],
+    testProvider: recovered ? f.verification.poll : async () => ({ ok: false, status: 'provider_setup_failed' }),
+    delay: async () => { await f.state.broker.serviceConnections.close(); },
+    invoke: async (_id, _action, input) => {
+      assert.equal(input.step, 'sync');
+      return { ok: true, status: 'succeeded', data: { syncId: 'paycom-main-workforce', intervalSeconds: 3600, desiredState: 'running' } };
+    },
+  });
+  assert.equal((await worker.runPending('recover-check')).completed, recovered ? 1 : 0);
+  assert.equal(attempts, recovered ? 1 : 0);
+  const paycom = (await f.list()).find(item => item.service === 'paycom');
+  assert.equal(paycom.state, recovered ? 'connected' : 'temporarily_unavailable');
+  assert.equal(paycom.reason, recovered ? null : 'auth_unavailable');
+});
+
 test('a directory enrollment with a lost response stays recoverable without a runtime slot', async t => {
   const f = await createConnectionsStack({ directoryEnrollment: true }); t.after(() => f.close());
   f.state.dropReply = true;
