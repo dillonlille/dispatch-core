@@ -49,8 +49,7 @@ function eraseBackups(backups, job) {
     }
     if (!pending) {
       for (const entry of manifest.roots) {
-        const scan = files.scan(path.join(root, 'payload', entry.label));
-        if (scan.treeDigest !== entry.treeDigest || scan.totalBytes !== entry.totalBytes) fail('directory_backup_changed');
+        require('./backup-erasure-verification').verifyForErasure(path.join(root, 'payload', entry.label), entry, manifest.createdAt);
       }
       atomic(marker, { version: 1, jobId: job.id, manifest });
     }
