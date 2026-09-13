@@ -87,7 +87,7 @@ test('DSP popup is clean and scoped; X dismissal persists on mobile', async ({ p
   await dialog.getByRole('button', { name: 'Close update' }).click();
   await expect(dialog).toHaveCount(0);
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'Home Page', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Currently under development', exact: true })).toBeVisible();
   expect((await (await page.request.get('/api/updates/popup')).json()).data.release).toBeNull();
 });
 test('Escape saves dismissal; failed save stays visible with retry and long copy scrolls', async ({ page }) => {

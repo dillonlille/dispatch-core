@@ -53,6 +53,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { PageHeading, Loading, ErrorNotice, Notice } from "@/components/shared";
 import { Dsps } from "@/pages/Dsps";
+import { DspHome } from "@/pages/DspHome";
 import { Diagnostics } from "@/pages/Diagnostics";
 import { Settings, DspOnboarding } from "@/pages/Settings";
 import { Plugins } from "@/pages/Plugins";
@@ -305,6 +306,8 @@ function Shell({
         <ErrorNotice error={error} />
         {route.id === "platform" ? (
           <Dsps />
+        ) : route.id === "dashboard" ? (
+          <DspHome />
         ) : route.id === "diagnostics" ? (
           <Diagnostics />
         ) : route.id === "updates" ? (
