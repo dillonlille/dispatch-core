@@ -51,12 +51,12 @@ async function fixture(t) {
     require('../../../shared/plugin-sdk/catalog').configureCatalog(defaults);
     require('dispatch-protocol/plugin-sdk/catalog').configureCatalog(defaults);
   });
-  function artifact(product, version, pluginVersion = null) {
+  function artifact(product, version, pluginVersion = null, pluginIds = ['paycom', 'sample']) {
     const directory = privateDirectory(path.join(paths.dev, product + '-' + version));
     privateDirectory(path.join(directory, 'code/runtime'));
     fs.writeFileSync(path.join(directory, 'code/runtime/index.js'), `module.exports='${version}';`, { mode: 0o600 });
     const packaged = [];
-    if (pluginVersion) for (const id of ['paycom', 'sample']) {
+    if (pluginVersion) for (const id of pluginIds) {
       const root = privateDirectory(path.join(directory, 'plugins', id));
       privateDirectory(path.join(root, 'backend')); privateDirectory(path.join(root, 'migrations'));
       const definition = { ...require('../../../tests/fixtures/paycom-plugin.json'), id, name: id, version: pluginVersion,

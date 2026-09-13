@@ -42,10 +42,19 @@ function createPluginService({ store, access, invoke, settingsPort = null, insta
         || store.db.prepare("SELECT 1 FROM directory_lifecycle_requests WHERE organization_id=? AND status IN ('queued','running')").get(selected.organization.id)) fail('installation_not_ready');
     return { ...selected, installation };
   }
+  // Internal session serialization and the Plugins endpoint must use the same
+  // release-scoped catalog. The organization id comes from the signed session.
+  function listForOrganization(organizationId) {
+    const key = store.installationControl(organizationId)?.runtimeKey;
+    return listFor(store, organizationId).flatMap(item => {
+      const approved = installationCoordinator?.latest?.(item.id, key);
+      if (installationCoordinator && !approved && item.state === 'uninstalled') return [];
+      return [{ ...item, latestVersion: approved?.version || item.version, automaticUpdates: true }];
+    });
+  }
   function list(session) {
     const { organization } = access.organizationFor(session, 'dashboard.view');
-    const key = store.installationControl(organization.id)?.runtimeKey;
-    return { items: listFor(store, organization.id).filter(item => !installationCoordinator || installationCoordinator.latest(item.id,key) || item.state !== 'uninstalled').map(item=>({...item,latestVersion:installationCoordinator?.latest?.(item.id,key)?.version || item.version,automaticUpdates:true})) };
+    return { items: listForOrganization(organization.id) };
   }
   function change(session, id, input) {
     const selected = context(session);
@@ -199,7 +208,7 @@ function createPluginService({ store, access, invoke, settingsPort = null, insta
     })().finally(() => { running = null; });
     return running;
   }
-  return { list, change, runPending,
+  return { list, listForOrganization, change, runPending,
     settings: require('./plugin-settings').createPluginSettings({store,access,port:settingsPort}),
     catalog: () => ({ items: catalog().map(publicPlugin) }) };
 }

@@ -42,6 +42,10 @@ subset. Install copies a sealed plugin into only the requesting DSP. Rollout
 updates enabled and disabled installed plugins to the selected release versions;
 uninstalled plugins are not copied. New DSPs have only the built-in Cortex
 connection until plugins are installed, and use the last completed fleet release.
+New plugins are visible only to DSPs on a release that approves them. Update Dev
+exposes them to Dev first; rollout exposes them to each DSP as it updates. Both
+session bootstrap and the Plugins endpoint apply this same catalog filter, so
+signing in or opening a platform-owner DSP view cannot reveal a Dev-only plugin.
 
 Existing full runtime copies remain readable for rollback. Installing Core does
 not rewrite those copies. New DSP creation and preparation of a new DSP release

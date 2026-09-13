@@ -100,7 +100,9 @@ function createAccessHttp({
           stations: membership.organization.stations,
         },
       })),
-      plugins: current.activeOrganizationId ? require('../accounts/src/plugins').listFor(access.store, current.activeOrganizationId) : [],
+      plugins: current.activeOrganizationId ? (plugins?.listForOrganization
+        ? plugins.listForOrganization(current.activeOrganizationId)
+        : require('../accounts/src/plugins').listFor(access.store, current.activeOrganizationId)) : [],
       csrfToken: current.csrfToken,
       expiresAt: current.expiresAt,
     };
