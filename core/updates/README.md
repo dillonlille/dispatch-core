@@ -15,7 +15,7 @@ release download. Commands never accept an arbitrary repository or executable.
 | `core/updates/commands.js`, `worker.js` | Persistent owner commands, one external worker and periodic release discovery. |
 | `core/updates/directory.js`, `transport.js` | Private worker-to-API socket and DSP activation under the directory controller. |
 | `host/releases/core.js`, `core-state.js` | Stop Core services, snapshot Core state, swap code, verify API/database health and recover. |
-| `host/releases/dsp.js`, `runtime.js` | Drain one DSP, snapshot its state, select its runtime/plugins and restore that DSP on failure. |
+| `host/releases/dsp.js`, `runtime.js`, `runtime-package.js` | Drain one DSP, snapshot its state, copy and verify runtime files, select its installed plugins and restore that DSP on failure. |
 | `host/releases/provisioning.js` | Give new DSPs the last completely rolled-out release. |
 | `host/releases/setup.js`, `bin/dispatch-updates` | Configure permanent Dev, register an existing split baseline, prepare the independent worker and queue offline recovery. |
 | `dashboard/frontend/src/pages/Updates.tsx` | Owner controls, changelogs, progress and recovery UI. |
@@ -24,7 +24,9 @@ release download. Commands never accept an arbitrary repository or executable.
 | `local/state/dsp-releases/` | Each DSP's selected release receipt. |
 | `local/backups/updates/` | Private Core and per-DSP rollback snapshots. |
 | `local/tools/update-worker/` | Retained bootstrap code that survives a Core directory swap. |
-| `dsps/<id>/runtime/releases/` | Independently installed DSP runtime releases. |
+| `dsps/<id>/runtime/releases/` | DSP-owned runtime and catalog metadata; newly prepared copies omit optional plugin payloads. |
+| `local/packages/plugins/` | Shared verified plugin package cache, used for installation and release approval. |
+| `dsps/<id>/plugins/<plugin>/versions/` | That DSP's installed plugin code and retained rollback versions. |
 
 The worker checks both feeds when idle, about every five minutes. **Check for
 updates** refreshes the selected product. Every install/start-rollout command
@@ -32,6 +34,21 @@ refreshes its product again; a stale button cannot install an superseded release
 An active rollout continues using its pinned digest when a newer release appears.
 Release downloads only stage verified files. They do not select code or start
 services. Shared dependencies remain versioned copies inside each DSP release.
+
+DSP source and optional plugin source continue to ship in one DSP release. The
+host keeps that full release, but each DSP receives only the runtime and catalog
+metadata. The original release manifest/digest authenticates the exact copied
+subset. Install copies a sealed plugin into only the requesting DSP. Rollout
+updates enabled and disabled installed plugins to the selected release versions;
+uninstalled plugins are not copied. New DSPs have only the built-in Cortex
+connection until plugins are installed, and use the last completed fleet release.
+
+Existing full runtime copies remain readable for rollback. Installing Core does
+not rewrite those copies. New DSP creation and preparation of a new DSP release
+use the smaller layout. Previously installed or historical release code remains
+retained for recovery; this change does not delete credentials, settings, business
+data or rollback packages. Runtime-only copies are verified by the host's
+`verifyRuntime`; `verifyRelease` still requires the complete publication archive.
 
 ## Initial deployment and configuration
 

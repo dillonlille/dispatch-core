@@ -25,7 +25,7 @@ async function withCreation(paths, action, work) {
       prepareDspRelease(paths, id, release.directory, digest);
       for (const item of manifest.plugins) await distributePackage(paths,
         { directory: path.join(release.directory, 'plugins', item.pluginId), digest: item.digest }, { lockFd });
-      if (manifest.plugins.length) await approvePackages(paths, { runtimeKey: id, packages: manifest.plugins }, { lockFd });
+      await approvePackages(paths, { runtimeKey: id, packages: manifest.plugins }, { lockFd });
       if (!existing) selectDspRelease(paths, id, digest, null);
       state.active.dsps[id] = digest;
       if (state.rollout && state.rollout.status !== 'completed' && id !== config.devDspId && !state.rollout.targets.includes(id)) state.rollout.targets.push(id);

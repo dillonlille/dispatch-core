@@ -40,7 +40,7 @@ function dspHooks({ paths, store, manager, execution }) {
     const value = privateJson(approvalsFile, process.geteuid(), true);
     if (!value) return {};
     const catalog = normalizeCatalog(value);
-    return { ...catalog.approved.production, ...catalog.approved.dsps[id] };
+    return { ...(Object.hasOwn(catalog.approved.dsps, id) ? catalog.approved.dsps[id] : catalog.approved.production) };
   };
   const stop = async c => {
     await manager.pluginBackend?.request(c.dspId, 'plugin.revoke', { pluginId: null });
@@ -102,7 +102,7 @@ function dspHooks({ paths, store, manager, execution }) {
       prepareDspRelease(paths, c.dspId, c.directory, c.digest);
       for (const item of c.manifest.plugins) await distributePackage(paths,
         { directory: path.join(c.directory, 'plugins', item.pluginId), digest: item.digest }, { lockFd });
-      if (c.manifest.plugins.length) await approvePackages(paths, { runtimeKey: c.dspId, packages: c.manifest.plugins }, { lockFd });
+      await approvePackages(paths, { runtimeKey: c.dspId, packages: c.manifest.plugins }, { lockFd });
       selectDspRelease(paths, c.dspId, c.digest, c.previousDigest);
       for (const plugin of store.db.prepare("SELECT * FROM dsp_plugins WHERE organization_id=? AND desired_state<>'uninstalled'").all(row.organization_id)) {
         const selected = c.manifest.plugins.find(item => item.pluginId === plugin.plugin_id);

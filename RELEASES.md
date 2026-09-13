@@ -29,6 +29,14 @@ selected artifact, updates one DSP at a time and pauses on failure. A completed
 rollout sets the default version for new DSPs; a Dev candidate never becomes that
 default. DSPs created during a rollout join its remaining queue.
 
+Each DSP release still includes runtime code and all catalog plugin packages.
+Core caches the full verified release, then copies only runtime code and catalog
+metadata into each DSP. Optional plugin code is copied on Install and upgraded
+only for DSPs where that plugin is installed (enabled or disabled). Later installs
+use the plugin version approved by the DSP's selected release. Fresh DSPs expose
+only the built-in Cortex connection. Existing full runtime copies are retained
+for compatibility and rollback; new release copies omit plugin payloads.
+
 Updates require a verified initial split deployment, a permanent Dev DSP and the
 separate update worker. The first published `0.0.1` Core predates these controls;
 it cannot install this feature by itself. See [update operations](core/updates/README.md)

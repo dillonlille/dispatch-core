@@ -59,3 +59,23 @@ test('legacy approval is preserved before staging a new candidate', () => {
  old.items.push({pluginId:'paycom',version:'0.18.0',digest:'b'.repeat(64)});
  assert.equal(normalizeCatalog(old).approved.production.paycom,'0.17.2');
 });
+
+test('an explicit DSP release catalog never falls back to global plugins, including an empty release', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-plugin-approvals-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const paths = { local: privateDirectory(path.join(root, 'local')) };
+  await approvePackages(paths, { runtimeKey: 'empty', packages: [] });
+  assert.equal(packageCatalog(paths).latest('paycom', 'empty'), null);
+  const file = path.join(paths.local, 'config/plugin-packages.json');
+  const value = JSON.parse(fs.readFileSync(file));
+  value.items.push({ pluginId: 'paycom', version: '1.0.0', digest: 'a'.repeat(64) });
+  value.approved.production.paycom = '1.0.0';
+  value.approved.dsps.selected = { paycom: '1.0.0' };
+  atomic(file, value);
+  assert.equal(packageCatalog(paths).latest('paycom', 'legacy').version, '1.0.0');
+  assert.equal(packageCatalog(paths).latest('paycom', 'selected').version, '1.0.0');
+  assert.equal(packageCatalog(paths).latest('paycom', 'empty'), null);
+  await approvePackages(paths, { runtimeKey: 'selected', packages: [] });
+  assert.equal(packageCatalog(paths).latest('paycom', 'selected'), null);
+  assert.throws(() => packageCatalog(paths).resolveApproved('paycom', '1.0.0', 'selected'), /plugin_package_not_approved/);
+});
