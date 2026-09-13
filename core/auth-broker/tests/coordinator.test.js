@@ -69,11 +69,11 @@ test('one admitted auth worker serves a DSP; SDK leases remain bound to the orig
   assert.equal(stopped.length, 2); assert.equal(manager.status().sessions, 0);
 });
 
-test('a third DSP can save while status polling keeps idle authentication workers warm', async t => {
+for (const signingIn of [false, true]) test(`a third DSP can save while status polling keeps idle authentication workers warm (sign-in: ${signingIn})`, async t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-auth-fairness-'));
   const store = new BrowserStore(path.join(root, 'state/browser.sqlite3'));
   const ids = ['a', 'b', 'c'].map(letter => 'dsp_' + letter.repeat(32));
-  const busy = new Set([ids[0]]), stopped = [], saved = [];
+  const busy = new Set(signingIn ? [ids[0]] : []), stopped = [], saved = [];
   const workers = {
     start: async row => ({ protocol: 'worker', endpoint: 'worker://' + row.id, access: row.id }),
     close: async row => { stopped.push(row.dsp_id); return true; },
@@ -99,7 +99,7 @@ test('a third DSP can save while status polling keeps idle authentication worker
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(manager.status().queued, 1);
   await coordinator.poll();
-  assert.deepEqual(stopped, [ids[1]], 'the active sign-in must keep its worker');
+  assert.deepEqual(stopped, [ids[signingIn ? 1 : 0]], 'yield only the one idle worker needed by the queue');
   await manager.pump();
   const result = await outcome;
   assert.equal(result.error, undefined);
