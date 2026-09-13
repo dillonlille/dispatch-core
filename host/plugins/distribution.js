@@ -42,14 +42,17 @@ async function distributePackage(paths, { directory, digest }, { lockFd } = {}) 
 // Internal lifecycle port. The release coordinator calls this only for the
 // selected DSP after validating its release. No HTTP-supplied paths are accepted.
 async function approvePackages(paths, { runtimeKey, packages }, { lockFd } = {}) {
-  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(runtimeKey) || !Array.isArray(packages) || !packages.length) throw new Error('plugin_approval_invalid');
+  if (!/^[a-zA-Z0-9_-]{1,128}$/.test(runtimeKey) || !Array.isArray(packages)) throw new Error('plugin_approval_invalid');
   const work = async () => {
     const file = path.join(paths.local, 'config/plugin-packages.json');
-    const catalog = normalizeCatalog(privateJson(file, process.geteuid()));
+    privateDirectory(path.dirname(file));
+    const catalog = normalizeCatalog(privateJson(file, process.geteuid(), true)
+      || { schemaVersion: 2, items: [], approved: { production: {}, dsps: {} } });
     const verified = packageCatalog(paths);
     const selected = {};
     for (const item of packages) {
-      const found = verified.resolve(item.pluginId, item.version);
+      const found = verified?.resolve(item.pluginId, item.version);
+      if (!found) throw new Error('plugin_package_unavailable');
       if (found.digest !== item.digest || Object.hasOwn(selected,item.pluginId)) throw new Error('plugin_approval_invalid');
       selected[item.pluginId] = item.version;
     }

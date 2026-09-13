@@ -5,7 +5,7 @@ const path = require('node:path');
 const { AccessStore, AccessControlService } = require('../src');
 const { createPluginService } = require('../src/plugins');
 const { success } = require('../../../shared/contracts/src/result');
-async function fixture(t, { installationCoordinator = null, settingsPort = null } = {}) {
+async function fixture(t, { installationCoordinator = null, settingsPort = null, dspCount = 2 } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-plugins-'));
   fs.chmodSync(root, 0o700);
   const paths = { databaseRoot: path.join(root, 'access'), database: path.join(root, 'access/access.sqlite3') };
@@ -17,7 +17,7 @@ async function fixture(t, { installationCoordinator = null, settingsPort = null 
   const platform = await access.acceptNewUser({ token: bootstrap.token, firstName: 'Platform', lastName: 'Owner', password, confirmPassword: password });
   const dsps = [];
   const runtimes = new Map();
-  for (let index = 0; index < 2; index++) {
+  for (let index = 0; index < dspCount; index++) {
     const created = access.createOrganization(platform.session, { idempotencyKey: `fixture:plugin:${index}`, name: `Plugin DSP ${index}`,
       abbreviation: `FX${index}`, stationCode: 'TST1', timezone: 'America/Chicago', ownerEmail: `owner${index}@example.test` });
     const owner = await access.acceptNewUser({ token: created.token, firstName: 'DSP', lastName: 'Owner', password, confirmPassword: password });

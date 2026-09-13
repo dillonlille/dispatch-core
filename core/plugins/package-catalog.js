@@ -39,7 +39,9 @@ function packageCatalog({ local }) {
   if (!raw) return null;
   const value=normalizeCatalog(raw),entries=new Map(value.items.map(item=>[`${item.pluginId}@${item.version}`,item]));
   const latest = (id,runtimeKey) => {
-    const version = (runtimeKey && value.approved.dsps[runtimeKey]?.[id]) || value.approved.production[id];
+    const approved = runtimeKey && Object.hasOwn(value.approved.dsps, runtimeKey)
+      ? value.approved.dsps[runtimeKey] : value.approved.production;
+    const version = approved[id];
     return version ? entries.get(`${id}@${version}`) : null;
   };
   const resolve = (id,version) => {

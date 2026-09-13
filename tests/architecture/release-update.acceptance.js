@@ -26,7 +26,8 @@ test('independent DSP updates switch a real runtime and restore its private stat
   const { LocalReleases } = require('../../core/updates/local-releases');
   const { dspHooks } = require('../../host/releases/dsp');
   const { hash, inventory, secureCopy, verifyRelease } = require('../../shared/releases/package');
-  const { prepareDspRelease, selectDspRelease, fileFor } = require('../../host/releases/runtime');
+  const { prepareDspRelease, selectDspRelease, runtimeSource, fileFor } = require('../../host/releases/runtime');
+  const { installationReceipt } = require('../../host/plugins/install');
   const beforeUmask = process.umask(0o077);
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dpd-'));
   for (const name of ['live', 'local', 'dsps', 'dev', 'worktrees']) privateDirectory(path.join(root, name));
@@ -85,6 +86,8 @@ test('independent DSP updates switch a real runtime and restore its private stat
   require('../../shared/plugin-sdk/catalog').configureCatalog(definitions);
   require('dispatch-protocol/plugin-sdk/catalog').configureCatalog(definitions);
   prepareDspRelease(paths, id, dspPackage, dspDigest); selectDspRelease(paths, id, dspDigest, null);
+  assert.equal(fs.existsSync(path.join(path.dirname(runtimeSource(paths, id)), 'plugins')), false);
+  assert.equal(fs.existsSync(path.join(dsp.root, 'plugins/paycom')), false);
   const installation = loadInstallation(paths);
   const open = () => openDirectoryRuntime({ paths, installation, journal, authorityCatalog: authority.authorityCatalog,
     publishAuthority: authority.publishAuthority, networkPermitted: () => false, select: () => false });
@@ -96,10 +99,18 @@ test('independent DSP updates switch a real runtime and restore its private stat
     const plugins = createPluginService({ store, access, installationCoordinator: { ...coordinator, async apply(input) { try { return await coordinator.apply(input); } catch (error) { process.stderr.write('Fixture plugin activation: ' + error.stack + '\n'); throw error; } } },
       invoke: (runtimeKey, action, input) => execution.invoke(runtimeKey, action, input) });
     const session = access.session(owner.token);
+    await runtime.manager.apply('start', 'fixture_fresh_runtime', id);
+    const ownerConnections = require('../../core/accounts/src/owner-connections').createOwnerConnections({ store, access,
+      invoke: (key, action, input) => runtime.hub.invoke(key, action, input) });
+    assert.deepEqual((await ownerConnections.list(session)).items.map(item => item.service), ['cortex']);
+    assert.equal(store.db.prepare('SELECT count(*) count FROM dsp_plugins WHERE organization_id=?').get(org).count, 0);
+    assert.equal(fs.existsSync(path.join(dsp.root, 'plugins/paycom')), false);
     plugins.change(session, 'paycom', { action: 'install', expectedRevision: 0, idempotencyKey: 'daemon:fixture:install' });
     await plugins.runPending();
     assert.equal(plugins.list(session).items[0].available, true, JSON.stringify(plugins.list(session).items.map(item => ({ id: item.id, state: item.state, failureCode: item.failureCode }))));
     assert.equal(runtime.hub.connected(id), true, 'Install resumes an always-on DSP after acknowledging the package');
+    assert.deepEqual((await ownerConnections.list(session)).items.map(item => item.service).sort(), ['cortex', 'paycom']);
+    assert.equal(installationReceipt(dsp.root, 'paycom').version, paycomVersion);
     const result = await runtime.hub.invoke(id, 'plugins.invoke', { pluginId: 'paycom', action: 'sync.status', input: { id: 'paycom-main-workforce' } });
     assert.equal(result.ok, true, JSON.stringify(result));
     const connections = await runtime.hub.invoke(id, 'connections.manage', { command: 'list' });
@@ -126,7 +137,20 @@ test('independent DSP updates switch a real runtime and restore its private stat
     const baseline = updates.state(); baseline.active = { core: coreDigest, dsps: { [id]: dspDigest } }; baseline.defaultDsp = dspDigest; updates.save(baseline);
     atomic(path.join(paths.local, 'config/updates.json'), { schemaVersion: 1, devDspId: id, apiPort: 4999 });
     const nextPackage = path.join(paths.dev, 'next-release'); secureCopy(dspPackage, nextPackage);
-    const nextManifest = { ...dspManifest, version: '0.0.2', channel: 'development' };
+    // Build a new sealed Paycom version inside this synthetic DSP release. Its
+    // migrations/runtime are real; only the version differs from the fixture.
+    const nextPluginRoot = path.join(nextPackage, 'plugins/paycom');
+    const nextPlugin = JSON.parse(fs.readFileSync(path.join(nextPluginRoot, 'dispatch-plugin.json')));
+    const nextPluginVersion = nextPlugin.version.split('.').map((part, index) => Number(part) + (index === 2 ? 1 : 0)).join('.');
+    nextPlugin.version = nextPluginVersion;
+    fs.chmodSync(path.join(nextPluginRoot, 'dispatch-plugin.json'), 0o600);
+    fs.writeFileSync(path.join(nextPluginRoot, 'dispatch-plugin.json'), JSON.stringify(nextPlugin));
+    fs.unlinkSync(path.join(nextPluginRoot, 'package-manifest.json'));
+    const nextPluginDigest = require('../../tooling/build-plugin-package').sealPackage(nextPluginRoot).digest;
+    const metadata = path.join(nextPackage, 'code/plugins/paycom/dispatch-plugin.json');
+    fs.chmodSync(metadata, 0o600); fs.writeFileSync(metadata, JSON.stringify(nextPlugin));
+    const nextManifest = { ...dspManifest, version: '0.0.2', channel: 'development',
+      plugins: dspManifest.plugins.map(item => item.pluginId === 'paycom' ? { ...item, version: nextPluginVersion, digest: nextPluginDigest } : item) };
     fs.chmodSync(path.join(nextPackage, 'release.json'), 0o600);
     fs.unlinkSync(path.join(nextPackage, 'release.json'));
     nextManifest.files = inventory(nextPackage);
@@ -140,6 +164,8 @@ test('independent DSP updates switch a real runtime and restore its private stat
     assert.equal(execution.store.get(id).state, 'running');
     assert.equal(execution.store.get(id).failure_code, null);
     assert.equal(JSON.parse(fs.readFileSync(fileFor(paths, id))).digest, nextDigest);
+    assert.equal(installationReceipt(dsp.root, 'paycom').version, nextPluginVersion);
+    assert.equal(fs.existsSync(path.join(path.dirname(runtimeSource(paths, id)), 'plugins')), false);
     assert.equal(runtime.hub.connected(id), true);
     assert.equal((await runtime.hub.invoke(id, 'health', {})).ok, true);
     const privateFile = path.join(dsp.root, 'data/release-sentinel'); fs.writeFileSync(privateFile, 'before failed migration', { mode: 0o600 });
@@ -155,6 +181,7 @@ test('independent DSP updates switch a real runtime and restore its private stat
     await assert.rejects(updates.updateDev(failedDigest), /release_health_failed/);
     assert.equal(fs.readFileSync(privateFile, 'utf8'), 'before failed migration');
     assert.equal(JSON.parse(fs.readFileSync(fileFor(paths, id))).digest, nextDigest);
+    assert.equal(installationReceipt(dsp.root, 'paycom').version, nextPluginVersion);
     assert.equal(runtime.manager.journal.record(id).desiredState, 'stopped');
     assert.equal(execution.store.get(id).state, 'sleeping');
     assert.equal(updates.state().operation, null);
