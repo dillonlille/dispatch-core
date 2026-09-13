@@ -155,12 +155,17 @@ class AuthenticationCoordinator {
     if (this.polling) return this.polling;
     this.polling = (async () => {
       for (const [dspId, entry] of this.dsps) {
-        if (!entry.row || entry.requests || entry.closing) continue;
+        if (!entry.row || entry.requests || entry.waiters || entry.closing) continue;
         try {
           const response = await this.workers.request(entry.row, { action: 'activity' });
           if (!response.ok) throw new Error();
-          if (entry.requests) continue;
-          if (!response.busy && this.clock() - entry.lastUsed >= this.idleMs) await this.closeEntry(dspId, entry);
+          if (entry.requests || entry.waiters) continue;
+          const leased = [...this.sessions.values()].some(session => session.entry === entry);
+          // Status polling can keep an otherwise idle worker warm forever.
+          // Give queued DSPs its slot after the worker confirms it is idle;
+          // in-progress sign-ins, verification and plugin leases stay intact.
+          const waiting = this.manager.status().queued > 0;
+          if (!response.busy && !leased && (waiting || this.clock() - entry.lastUsed >= this.idleMs)) await this.closeEntry(dspId, entry);
           else await this.manager.renew(entry.context, entry.lease.leaseId);
         } catch { await this.closeEntry(dspId, entry); }
       }

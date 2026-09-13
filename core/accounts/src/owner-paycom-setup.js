@@ -7,7 +7,8 @@ const { managedInstallationContext } = require('./installation-authority');
 const { createAccessInstallationActivationAuthority } = require('./installation-activation');
 const { createOnboardingStore } = require('./onboarding-store');
 function fail(code, status = 409) { throw new AccessError(code, status); }
-function createOwnerPaycomSetup({ store, access, invoke, clock = Date.now }) {
+function createOwnerPaycomSetup({ store, access, invoke, clock = Date.now,
+  enroll = (key, input) => invoke(key, 'paycom.setup', input) }) {
   const requests = createOnboardingStore(store, clock);
   function context(session) {
     require('./plugins').requirePlugin(access, session, 'paycom');
@@ -89,7 +90,7 @@ function createOwnerPaycomSetup({ store, access, invoke, clock = Date.now }) {
           guard();
           row = requests.begin(selected.organization.id, session.user.id, input.idempotencyKey, input.intent, selected.manifest.revision);
         });
-        const result = await invoke(selected.manifest.runtime.key, 'paycom.setup', {
+        const result = await enroll(selected.manifest.runtime.key, {
           command: 'enroll', requestId: row.id, expiresAt: clock() + 30_000, credentials, intent: input.intent,
         });
         if (!result?.ok || result.status !== 'succeeded' || result.data?.configured !== true) fail(setupFailure(result?.status));
@@ -111,7 +112,7 @@ function createOwnerPaycomSetup({ store, access, invoke, clock = Date.now }) {
     try {
       row = requests.begin(selected.organization.id, session.user.id, input.idempotencyKey, input.intent, selected.manifest.revision);
       authority.guard(() => true);
-      const result = await invoke(selected.manifest.runtime.key, 'paycom.setup', {
+      const result = await enroll(selected.manifest.runtime.key, {
         command: 'enroll', requestId: row.id, expiresAt: clock() + 30_000, credentials, intent: input.intent,
       });
       authority.guard(() => true);

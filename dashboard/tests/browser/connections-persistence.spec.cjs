@@ -10,8 +10,8 @@ async function login(page, f) {
   await expect(page.getByRole('heading', { name: 'Connections', exact: true })).toBeVisible();
 }
 
-for (const mobile of [false, true]) test(`form credentials reach the real encrypted vault (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
-  const f = await createConnectionsStack();
+for (const mobile of [false, true]) test(`form credentials reach a directory DSP vault without a runtime slot (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
+  const f = await createConnectionsStack({ directoryEnrollment: true });
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -47,6 +47,7 @@ for (const mobile of [false, true]) test(`form credentials reach the real encryp
     const paycomSaved = page.waitForResponse(response => response.url().endsWith('/connections/paycom/save'));
     await dialog.getByRole('button', { name: 'Save and connect' }).click();
     expect((await paycomSaved).status()).toBe(202);
+    expect(f.state.runtimeEnrollments).toBe(0);
     await expect(dialog).toHaveCount(0);
     await f.restartBroker();
     expect(f.state.broker.vault.readForAdapter('paycom-main').credentials).toEqual(paycom);
@@ -58,6 +59,50 @@ for (const mobile of [false, true]) test(`form credentials reach the real encryp
     await page.screenshot({ path: `/tmp/dispatch-save-verified-${mobile ? 'mobile' : 'desktop'}.png`, fullPage: true });
     expect(errors).toEqual([]);
   } finally { await page.close(); await f.close(); }
+});
+
+for (const mobile of [false, true]) test(`an unconfirmed Paycom save stays dismissible during a stalled status check (${mobile ? 'mobile' : 'desktop'})`, async ({ page }) => {
+  const f = await createConnectionsStack({ directoryEnrollment: true });
+  let releaseStatus, failed = false, saves = 0;
+  const pendingStatus = new Promise(resolve => { releaseStatus = resolve; });
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('console', message => {
+    if (message.type() === 'error' && !message.text().includes('503 (Service Unavailable)')) errors.push(message.text());
+  });
+  try {
+    if (mobile) await page.setViewportSize({ width: 390, height: 844 });
+    await login(page, f);
+    await page.route('**/api/organization/connections', async route => {
+      if (failed) await pendingStatus;
+      await route.continue();
+    });
+    await page.route('**/api/organization/connections/paycom/save', async route => {
+      saves++; failed = true;
+      await route.fulfill({ status: 503, json: { ok: false, error: { code: 'dashboard_unavailable' } } });
+    });
+    await page.getByRole('button', { name: 'Connect Paycom', exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    for (const [label, value] of [['Client code', 'synthetic'], ['Username', 'synthetic'], ['Password', 'synthetic-form-secret'],
+      ...[1, 2, 3, 4, 5].map(index => [`Security answer ${index}`, `synthetic-${index}`])]) {
+      await dialog.getByLabel(label, { exact: true }).fill(value);
+    }
+    await dialog.getByRole('button', { name: 'Save and connect' }).click();
+    await expect(dialog.getByText('We couldn’t confirm this save.', { exact: false })).toBeVisible();
+    await expect(dialog.getByLabel('Password', { exact: true })).toHaveValue('');
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeEnabled();
+    await expect(dialog.getByRole('button', { name: 'Save and connect' })).toBeDisabled();
+    await expect(page).toHaveTitle('Settings · Dispatch');
+    await expect(page).toHaveURL(/#\/settings\?tab=connections$/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `/tmp/dispatch-save-stalled-${mobile ? 'mobile' : 'desktop'}.png` });
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    expect(saves).toBe(1);
+    expect(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]))).not.toContain('synthetic-form-secret');
+    expect(errors).toEqual([]);
+  } finally { releaseStatus(); await page.close(); await f.close(); }
 });
 
 test('lost acknowledgement explains uncertainty while the saved connection can be recovered', async ({ page }) => {
