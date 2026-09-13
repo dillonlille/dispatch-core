@@ -57,6 +57,10 @@ function createOnboardingStore(store, clock = Date.now) {
     if (db.prepare("UPDATE installation_onboarding_requests SET status=?,failure_code=?,lease_expires_at=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=? AND fence=? AND lease_expires_at>?")
       .run(code ? 'failed' : 'succeeded', code, clock(), row.id, row.worker_id, row.fence, clock()).changes !== 1) fail();
   }
-  return { get, latest, prior, begin, enrolled, enrollmentFailed, candidates, claim, renew, finish, requeue };
+  function defer(row) {
+    if (db.prepare("UPDATE installation_onboarding_requests SET status='queued',attempt=attempt-1,worker_id=NULL,lease_expires_at=NULL,updated_at=? WHERE id=? AND status='running' AND worker_id=? AND fence=? AND lease_expires_at>?")
+      .run(clock(), row.id, row.worker_id, row.fence, clock()).changes !== 1) fail();
+  }
+  return { get, latest, prior, begin, enrolled, enrollmentFailed, candidates, claim, renew, finish, requeue, defer };
 }
 module.exports = { createOnboardingStore, LEASE_MS };

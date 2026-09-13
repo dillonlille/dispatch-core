@@ -69,3 +69,78 @@ test('one admitted auth worker serves a DSP; SDK leases remain bound to the orig
   assert.equal(stopped.length, 2); assert.equal(manager.status().sessions, 0);
 });
 
+for (const signingIn of [false, true]) test(`a third DSP can save while status polling keeps idle authentication workers warm (sign-in: ${signingIn})`, async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-auth-fairness-'));
+  const store = new BrowserStore(path.join(root, 'state/browser.sqlite3'));
+  const ids = ['a', 'b', 'c'].map(letter => 'dsp_' + letter.repeat(32));
+  const busy = new Set(signingIn ? [ids[0]] : []), stopped = [], saved = [];
+  const workers = {
+    start: async row => ({ protocol: 'worker', endpoint: 'worker://' + row.id, access: row.id }),
+    close: async row => { stopped.push(row.dsp_id); return true; },
+    request: async (row, request) => {
+      if (request.action === 'activity') return { ok: true, busy: busy.has(row.dsp_id) };
+      if (request.action === 'connections') return { ok: true, items: [] };
+      assert.equal(request.action, 'enroll-paycom');
+      saved.push(row.dsp_id); return { ok: true, status: 'configured' };
+    },
+  };
+  const manager = new BrowserManager({ store, workers, authorize: () => true, limits: { sessions: 2, tabs: 12 } });
+  await manager.start();
+  const coordinator = new AuthenticationCoordinator({ manager, workers, idleMs: 60000,
+    contextFor: dspId => ({ dspId, pluginId: 'core-auth', installationRevision: 1, jobId: 'auth' }),
+    authorizeRequest: () => true, authorizePlugin: () => true, relay: () => { throw new Error('no browser needed'); },
+  });
+  t.after(async () => { await coordinator.close(); await manager.close(); store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  for (const id of ids.slice(0, 2)) await coordinator.request(id, { action: 'connections', input: { command: 'list' } });
+  const pending = coordinator.request(ids[2], { action: 'enroll-paycom', intent: 'create', credentials: { password: 'synthetic-fair-save' } },
+    { signal: AbortSignal.timeout(3000) });
+  // Attach immediately so a regression's timeout is an ordinary test failure.
+  const outcome = pending.then(value => ({ value }), error => ({ error }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(manager.status().queued, 1);
+  await coordinator.poll();
+  assert.deepEqual(stopped, [ids[signingIn ? 1 : 0]], 'yield only the one idle worker needed by the queue');
+  await manager.pump();
+  const result = await outcome;
+  assert.equal(result.error, undefined);
+  assert.equal(result.value.status, 'configured');
+  assert.deepEqual(saved, [ids[2]]);
+  assert.equal(manager.status().sessions, 2);
+  assert.equal(fs.readFileSync(path.join(root, 'state/browser.sqlite3')).includes('synthetic-fair-save'), false);
+});
+
+test('queued DSPs do not evict an in-flight request or an outstanding plugin browser lease', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-auth-contention-'));
+  const store = new BrowserStore(path.join(root, 'state/browser.sqlite3'));
+  const ids = ['a', 'b'].map(letter => 'dsp_' + letter.repeat(32)), stopped = [];
+  let unblock, hold = false;
+  const workers = {
+    start: async row => ({ protocol: 'worker', endpoint: 'worker://' + row.id, access: row.id }),
+    close: async row => { stopped.push(row.dsp_id); return true; },
+    request: async (_row, request) => {
+      if (request.action === 'activity') return { ok: true, busy: false };
+      if (hold) await new Promise(resolve => { unblock = resolve; });
+      return { ok: true, items: [] };
+    },
+  };
+  const manager = new BrowserManager({ store, workers, authorize: () => true, limits: { sessions: 1, tabs: 6 } });
+  await manager.start();
+  const coordinator = new AuthenticationCoordinator({ manager, workers, idleMs: 60000,
+    contextFor: dspId => ({ dspId, pluginId: 'core-auth', installationRevision: 1, jobId: 'auth' }),
+    authorizeRequest: () => true, authorizePlugin: () => true, relay: () => {},
+  });
+  t.after(async () => { unblock?.(); coordinator.sessions.clear(); await coordinator.close(); await manager.close(); store.close(); fs.rmSync(root, { recursive: true, force: true }); });
+  const list = id => coordinator.request(id, { action: 'connections', input: { command: 'list' } });
+  await list(ids[0]); hold = true;
+  const reading = list(ids[0]);
+  await new Promise(resolve => setImmediate(resolve));
+  const cancel = new AbortController();
+  const queued = coordinator.request(ids[1], { action: 'connections', input: { command: 'list' } }, { signal: cancel.signal });
+  const cancelled = assert.rejects(queued, { code: 'cancelled' });
+  await new Promise(resolve => setImmediate(resolve));
+  await coordinator.poll(); assert.deepEqual(stopped, []);
+  hold = false; unblock(); await reading;
+  coordinator.sessions.set('retained', { entry: coordinator.dsps.get(ids[0]) });
+  await coordinator.poll(); assert.deepEqual(stopped, []);
+  coordinator.sessions.clear(); cancel.abort(); await cancelled;
+});

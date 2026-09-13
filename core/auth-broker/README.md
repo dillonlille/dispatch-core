@@ -19,6 +19,12 @@ pin the DSP's acknowledged package digest and revision; declaring a service in a
 manifest does not grant it automatically. Core may relay owner credentials in
 memory to that DSP's worker, but does not persist them or log them.
 
+When another DSP is queued, idle authentication workers yield their slots even
+if status polling keeps them warm. Active requests, provider verification and
+plugin browser leases retain their workers. Directory DSPs enroll Paycom through
+the vault worker without waking the full collection runtime; subsequent setup
+waits in its existing onboarding queue when runtime capacity is occupied.
+
 The existing provider session, attempt-guard, native Chrome and assistance code
 is reused. Paycom's adapter comes from the DSP's installed package. Cortex stays
 a built-in automatic sign-in and owner-entered email-code connection. A plugin

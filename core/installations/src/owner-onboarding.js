@@ -43,6 +43,10 @@ function createOwnerOnboardingWorker({ store, invoke, backends = ['oci_container
           manifestAuthority: selected.manifestAuthority, parameters: {},
         });
         guard();
+        if (!result?.ok && result?.status === 'execution_capacity_wait' && selected.backend === 'directory_service_v1') {
+          requests.defer(row);
+          return { status: 'queued' };
+        }
         if (!result?.ok) fail(setupFailure(result?.status));
         if (result.status === 'succeeded') {
           if (step === 'sync') {
@@ -75,7 +79,7 @@ function createOwnerOnboardingWorker({ store, invoke, backends = ['oci_container
     for (const [index, row] of candidates.entries()) {
       try {
         const result = await run(row.id, `${workerId}_${index}`);
-        if (result.status === 'succeeded') completed += 1; else failed += 1;
+        if (result.status === 'succeeded') completed += 1; else if (result.status === 'failed') failed += 1;
       } catch { failed += 1; }
     }
     return { processed: candidates.length, completed, failed };

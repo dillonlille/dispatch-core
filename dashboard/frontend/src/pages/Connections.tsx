@@ -269,7 +269,9 @@ export function Connections() {
           caught.status >= 500)
       ) {
         setSaveUnconfirmed(true);
-        await query.refetch();
+        // Reconcile in the background so a slow status check cannot trap the
+        // owner in a disabled credential dialog after the save already failed.
+        void query.refetch().catch(() => {});
       }
     } finally {
       setBusy(null);
@@ -490,7 +492,10 @@ export function Connections() {
                   >
                     Cancel
                   </Button>
-                  <SubmitButton busy={busy !== null} disabled={busy !== null}>
+                  <SubmitButton
+                    busy={busy !== null}
+                    disabled={busy !== null || saveUnconfirmed}
+                  >
                     Save and connect
                   </SubmitButton>
                 </DialogFooter>

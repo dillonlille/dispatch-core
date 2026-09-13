@@ -35,6 +35,60 @@ test('HTTP credentials persist encrypted across broker restarts for Cortex and P
     .latest(f.organizationId).status, 'queued');
 });
 
+test('a sleeping directory DSP saves Paycom directly in its vault while runtime capacity is full', async t => {
+  const f = await createConnectionsStack({ directoryEnrollment: true }); t.after(() => f.close());
+  const platform = f.access.session(f.platform.token);
+  const viewed = f.access.beginDspView(platform, { controlRef: f.access.issuePlatformControlRef(platform, f.organizationId) });
+  const response = await fetch(`${f.base}/api/organization/connections/paycom/save`, {
+    method: 'POST', headers: { ...f.headers, Cookie: `dispatch_session=${f.platform.token}`,
+      'X-Dispatch-CSRF': platform.csrfToken, 'X-Dispatch-DSP-View': viewed.dspView.viewRef },
+    body: JSON.stringify({ credentials: PAYCOM }),
+  });
+  assert.equal(response.status, 202);
+  assert.equal((await response.json()).data.configured, true);
+  assert.equal(f.state.runtimeEnrollments, 0);
+  assert.deepEqual(f.state.broker.vault.readForAdapter('paycom-main').credentials, PAYCOM);
+  const requests = require('../../core/accounts/src/onboarding-store').createOnboardingStore(f.store);
+  const job = requests.latest(f.organizationId);
+  assert.equal(job.status, 'queued');
+  let capacity = false;
+  const worker = require('../../core/installations/src/owner-onboarding').createOwnerOnboardingWorker({
+    store: f.store, backends: ['directory_service_v1'], invoke: async (_id, _action, input) => {
+      if (!capacity) return { ok: false, status: 'execution_capacity_wait' };
+      return { ok: true, status: 'succeeded', data: input.step === 'sync'
+        ? { syncId: 'paycom-main-workforce', intervalSeconds: 3600, desiredState: 'running' }
+        : { profileId: 'paycom-main', provider: 'paycom', status: 'authenticated', testedAt: new Date().toISOString() } };
+    },
+  });
+  for (let i = 0; i < 4; i++) {
+    const result = await worker.runPending('synthetic-worker');
+    assert.equal(result.failed, 0);
+    assert.equal(requests.latest(f.organizationId).status, 'queued');
+    assert.equal(requests.latest(f.organizationId).attempt, 0);
+  }
+  const stale = requests.claim(job.id, 'stale-worker'); requests.defer(stale);
+  const current = requests.claim(job.id, 'current-worker');
+  assert.throws(() => requests.defer(stale), /installation_operation_in_progress/);
+  requests.defer(current);
+  capacity = true;
+  assert.equal((await worker.runPending('available-worker')).completed, 1);
+  assert.equal(requests.latest(f.organizationId).status, 'succeeded');
+  await f.restartBroker();
+  assert.deepEqual(f.state.broker.vault.readForAdapter('paycom-main').credentials, PAYCOM);
+  assertNoPlaintext(f.root, PAYCOM.password);
+});
+
+test('a directory enrollment with a lost response stays recoverable without a runtime slot', async t => {
+  const f = await createConnectionsStack({ directoryEnrollment: true }); t.after(() => f.close());
+  f.state.dropReply = true;
+  assert.equal((await f.save('paycom', PAYCOM)).status, 503);
+  await f.restartBroker();
+  assert.deepEqual(f.state.broker.vault.readForAdapter('paycom-main').credentials, PAYCOM);
+  assert.equal((await f.save('paycom', { ...PAYCOM, password: 'synthetic-replacement' })).status, 202);
+  assert.equal(f.state.runtimeEnrollments, 0);
+  assert.equal(f.state.broker.vault.readForAdapter('paycom-main').credentials.password, 'synthetic-replacement');
+});
+
 test('platform owner DSP view saves Cortex and Paycom through HTTP into the selected encrypted vault', async t => {
   const f = await fixture(t), platform = f.access.session(f.platform.token);
   const viewed = f.access.beginDspView(platform, { controlRef: f.access.issuePlatformControlRef(platform, f.organizationId) });

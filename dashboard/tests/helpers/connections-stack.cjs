@@ -15,7 +15,7 @@ const { createRuntimeGatewayDispatchClient } = require('../../../shared/gateway/
 const { createRuntimeConnections } = require('dispatch-runtime-kit/supervisor/src/connections');
 const { createContainerPaycomSetup } = require('dispatch-dsp/plugins/paycom/backend/runtime/setup.js');
 
-async function createConnectionsStack() {
+async function createConnectionsStack({ directoryEnrollment = false } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dispatch-save-'));
   fs.chmodSync(root, 0o700);
   const oldEnvironment = ['DISPATCH_MANAGED_RUNTIME', 'DISPATCH_PROJECT_ROOT'].map(key => [key, process.env[key]]);
@@ -24,7 +24,8 @@ async function createConnectionsStack() {
   const paths = defaultPaths({ databaseRoot: path.join(root, 'vault'), secretRoot: path.join(root, 'secret'),
     stateRoot: path.join(root, 'state'), runtimeRoot: path.join(root, 'run') });
   const store = new AccessStore({ databaseRoot: path.join(root, 'core'), database: path.join(root, 'core', 'access.sqlite3') });
-  const access = new AccessControlService(store, { installationOperatorEnabled: true, installationBackend: 'native_service_v1' });
+  const access = new AccessControlService(store, { installationOperatorEnabled: true,
+    installationBackend: directoryEnrollment ? 'directory_service_v1' : 'native_service_v1' });
   const password = 'isolated dashboard owner password';
   const platformInvite = access.createPlatformBootstrap({ email: 'platform@save.test' });
   const platform = await access.acceptNewUser({ token: platformInvite.token, firstName: 'Platform', lastName: 'Owner',
@@ -38,7 +39,7 @@ async function createConnectionsStack() {
   store.updateOrganizationStatus(dsp.organization.id, 'active', Date.now());
   require('../../../core/accounts/tests/plugin-fixture').enableFixturePlugin(store, dsp.organization.id);
   const runtimeKey = store.installationControl(dsp.organization.id).runtimeKey;
-  const state = { dropReply: false, authentication: null, verification: null, browsers: [], broker: null };
+  const state = { dropReply: false, authentication: null, verification: null, browsers: [], broker: null, runtimeEnrollments: 0 };
   const options = {
     browserRuntime: { launch: async () => {
       const browser = { endpoint: 'http://127.0.0.1:43210', closed: false,
@@ -66,6 +67,10 @@ async function createConnectionsStack() {
   const transport = createRuntimeGatewayDispatchClient({ socketPath, runtimeKey });
   const invoke = async (key, action, input) => {
     if (key !== runtimeKey) throw new Error('wrong DSP');
+    if (input.command === 'enroll') {
+      state.runtimeEnrollments++;
+      if (directoryEnrollment) return { ok: false, status: 'execution_capacity_wait' };
+    }
     const result = await (action === 'connections.manage' ? transport.connectionsManage(input) : transport.paycomSetup(input));
     if (state.dropReply && (input.command === 'save' || input.command === 'enroll')) {
       state.dropReply = false;
@@ -73,7 +78,15 @@ async function createConnectionsStack() {
     }
     return result;
   };
-  const paycomSetup = createOwnerPaycomSetup({ store, access, invoke });
+  const enroll = directoryEnrollment ? require('../../../host/controller/paycom-enrollment').createPaycomEnrollment({
+    backend: { async request(id, operation, input, options) {
+      if (id !== runtimeKey || operation !== 'auth.request') throw new Error('wrong DSP');
+      const result = await require('dispatch-runtime-kit/auth-broker/src/client').request(paths.socket, input, options);
+      if (state.dropReply) { state.dropReply = false; throw new Error('lost enrollment response'); }
+      return result;
+    } },
+  }) : undefined;
+  const paycomSetup = createOwnerPaycomSetup({ store, access, invoke, ...(enroll ? { enroll } : {}) });
   const connections = createOwnerConnections({ store, access, invoke, paycomSetup });
   const server = createDashboardServer({ access, connections, paycomSetup, client: {
     workforce: { day: unused }, sync: { status: unused, runNow: unused }, system: { status: unused },
