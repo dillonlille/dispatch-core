@@ -35,7 +35,7 @@ An active rollout continues using its pinned digest when a newer release appears
 Release downloads only stage verified files. They do not select code or start
 services. Shared dependencies remain versioned copies inside each DSP release.
 
-DSP source and optional plugin source continue to ship in one DSP release. The
+DSP code and optional plugin packages continue to ship in one DSP release. The
 host keeps that full release, but each DSP receives only the runtime and catalog
 metadata. The original release manifest/digest authenticates the exact copied
 subset. Install copies a sealed plugin into only the requesting DSP. Rollout
@@ -154,8 +154,9 @@ The browser checks cover independent controls, newer-release reset, paused
 rollout, sequential resume and mobile layout. CI runs the same browser checks.
 
 `tests/architecture/release-update.acceptance.js` additionally installs a real
-Paycom package in a private Linux/systemd namespace lab, switches DSP releases,
-wakes a sleeping DSP and checks rollback of its private state. Provide sealed
+Paycom package in a private Linux/systemd namespace lab. It verifies Cortex-only
+startup without optional plugin payloads, installs Paycom, switches DSP and
+Paycom versions, wakes a sleeping DSP and checks rollback of its private state. Provide sealed
 Node/tini and browser tool roots plus explicit Core/DSP release directories via
 `DISPATCH_WORKER_TEST_TOOLS`, `DISPATCH_WORKER_TEST_BROWSER`,
 `DISPATCH_UPDATE_TEST_CORE` and `DISPATCH_UPDATE_TEST_DSP`. It uses synthetic data
